@@ -1,0 +1,30 @@
+<package>
+  <description brief="google_goggles">
+
+     google_goggles
+
+  </description>
+  <author>Ben Kehoe</author>
+  <license>BSD</license>
+  <review status="unreviewed" notes=""/>
+  <url>http://ros.org/wiki/google_goggles</url>
+  <depend package="rospy"/>
+  <depend package="roscpp"/>
+  <depend package="sensor_msgs"/>
+  <depend package="pcl_ros"/>
+  <depend package="pcl"/>
+  <depend package="opencv2"/>
+  <depend package="cv_bridge"/>
+  <depend package="std_msgs"/>
+  <depend package="std_srvs"/>
+  <depend package="tf"/>
+  <depend package="tf_conversions"/>
+  <depend package="geometry_msgs"/>
+  <!--depend package="rll_utils"/-->
+  <!--depend package="pr2_simple_motions_msgs"/-->
+  <!--depend package="pr2_simple_arm_motions"/-->
+  <!--depend package="pr2_simple_head_motions"/-->
+
+</package>
+
+

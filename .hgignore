@@ -1,0 +1,11 @@
+syntax: glob
+
+*~
+bin/
+build/
+lib/
+data/
+src/backup_*/
+scripts/backup_*/
+Makefile
+
