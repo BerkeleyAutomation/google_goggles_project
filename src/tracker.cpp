@@ -95,7 +95,7 @@ void TabletopTracker::updateClusters() {
 		ss << "not enough points (" << on_table->size() << ") on table";
 		throw runtime_error(ss.str());
 	}
-	cout << "on table: " << on_table->size() << endl;
+	//cout << "on table: " << on_table->size() << endl;
 	
 // 	latest_cluster = on_table;
 // 	if (!combined_cluster) {
@@ -111,9 +111,22 @@ void TabletopTracker::updateClusters() {
 	clusters.clear();
 	BOOST_FOREACH(vector<int>& inds, cluster_inds) {
 		ColorCloudPtr cluster = extractInds(on_table, inds);
-		clusters.push_back(cluster);
+		float minHeight = 10000;
+		float maxHeight = -10000;
+		BOOST_FOREACH(ColorPoint& pt, cluster->points) {
+			float height = pt.z - table_height;
+			if (height > maxHeight) {
+				maxHeight = height;
+			} else if (height < minHeight) {
+				minHeight = height;
+			}
+		}
+		//ROS_DEBUG_STREAM(fabs(maxHeight-minHeight));
+		if (fabs(maxHeight-minHeight) > 0.023) {
+			clusters.push_back(cluster);
+		}
 	}
-
+	
 	clusters = mergeOverlappingCircles(clusters);
 	
 	size_t min_ind = -1;
@@ -143,12 +156,12 @@ void TabletopTracker::updateClusters() {
 				minHeight = height;
 			}
 		}
-		std::cout << "cluster height: " << maxHeight - minHeight << " (" << minHeight << "," << maxHeight << ")" << std::endl;
-		std::cout << "cluster centroid: (" << centroid[0] << "," << centroid[1] << "," << centroid[2] << ") " << dist << std::endl;
+		//std::cout << "cluster height: " << maxHeight - minHeight << " (" << minHeight << "," << maxHeight << ")" << std::endl;
+		//std::cout << "cluster centroid: (" << centroid[0] << "," << centroid[1] << "," << centroid[2] << ") " << dist << std::endl;
 	}
 
 	latest_cluster = clusters[min_ind];
-	if (!combined_cluster) {
+	if (!combined_cluster || mode == TRACK) {
 		combined_cluster = latest_cluster;
 	} else {
 		
@@ -192,7 +205,7 @@ void TabletopTracker::updateCylinders() {
 	stringstream ss;
 	ss << "ids: ";
 	BOOST_FOREACH(int i, ids) ss << i << " ";
-	ROS_INFO_STREAM(ss);
+	//ROS_INFO_STREAM(ss.str());
 }
 
 

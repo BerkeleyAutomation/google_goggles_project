@@ -1,7 +1,10 @@
 #include "table_config.h"
-float TableConfig::MIN_HEIGHT=.80;
+//float TableConfig::MIN_HEIGHT=.80;
+//float TableConfig::MIN_HEIGHT=.70;
 //float TableConfig::MIN_HEIGHT=.68;
-float TableConfig::MAX_HEIGHT=100;
+float TableConfig::MIN_HEIGHT=.65;
+//float TableConfig::MAX_HEIGHT=100;
+float TableConfig::MAX_HEIGHT=1;
 float TableConfig::HIST_RES = .005;
 float TableConfig::TABLE_POINTS_TOLERANCE=.025;
 float TableConfig::VOXEL_SIZE=.01;

@@ -65,5 +65,5 @@ target_link_libraries(convert_cloud google_goggles_point_cloud)
 rosbuild_add_executable(process_ref_cloud src/process_ref_point_cloud.cpp)
 target_link_libraries(process_ref_cloud google_goggles_point_cloud)
 
-rosbuild_add_executable(point_cloud_grasper src/point_cloud_grasper.cpp)
-target_link_libraries(point_cloud_grasper google_goggles_point_cloud)
+rosbuild_add_executable(pose_estimator src/pose_estimator.cpp)
+target_link_libraries(pose_estimator google_goggles_point_cloud)

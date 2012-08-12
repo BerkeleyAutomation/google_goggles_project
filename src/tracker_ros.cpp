@@ -1,6 +1,7 @@
 #include "tracker_ros.h"
 #include <string>
 #include <vector>
+#include <std_msgs/Float32.h>
 #include <sensor_msgs/PointCloud2.h>
 #include <geometry_msgs/PoseStamped.h>
 #include <pcl/io/pcd_io.h>
@@ -8,8 +9,8 @@
 using namespace std;
 using namespace Eigen;
 
-static string map_frame = "/odom_combined";
-static string base_frame = "/base_link";
+//static string map_frame = "/odom_combined";
+//static string base_frame = "/base_link";
 
 Eigen::Affine3f toEigenTransform(const btTransform& transform) {
 	btVector3 transBullet = transform.getOrigin();
@@ -21,22 +22,27 @@ Eigen::Affine3f toEigenTransform(const btTransform& transform) {
 	return out;
 }
 
-TabletopTrackerROS::TabletopTrackerROS(ros::NodeHandle nh) : hasPendingMessage(false) {
+TabletopTrackerROS::TabletopTrackerROS(ros::NodeHandle nh,TabletopTracker::Mode mode) : TabletopTracker(mode),hasPendingMessage(false) {
 	points_pub = nh.advertise<sensor_msgs::PointCloud2>("google_goggles/points",100);
 	cloud_pub = nh.advertise<sensor_msgs::PointCloud2>("google_goggles/cloud",100);
 	cluster_pub = nh.advertise<sensor_msgs::PointCloud2>("google_goggles/clusters",100);
 	//cyl_pub = nh.advertise<misc_msgs::TrackedCylinders>("spinning_tabletop/cylinders",100);
 	//cloud_sub = nh.subscribe("input_cloud",1,&TabletopTrackerROS::callback, this);
+	table_height_pub = nh.advertise<std_msgs::Float32>("google_goggles/table_height",1);
 	cloud_sub = nh.subscribe("/camera/depth_registered/points",1,&TabletopTrackerROS::callback, this);
+	
+	map_frame = "/base_footprint";
+	base_frame = "/base_footprint";
 }
 
 
 void TabletopTrackerROS::callback(const sensor_msgs::PointCloud2& msg) {
-	ROS_INFO("Got msg");
+	//ROS_INFO("Got msg");
 	ColorCloudPtr cloud(new ColorCloud());
 	pcl::fromROSMsg(msg, *cloud);
 	setLatest(cloud);
 	latest_stamp = msg.header.stamp;
+	latest_cloud_frame = msg.header.frame_id;
 	hasPendingMessage = true;
 }
 
@@ -46,7 +52,8 @@ void TabletopTrackerROS::updateTransform() {
 	//listener.lookupTransform("/base_footprint", "/narrow_stereo_optical_frame", ros::Time(0), stamped_transform);
 	//listener.lookupTransform("/base_footprint", "/camera_rgb_optical_frame", ros::Time(0), stamped_transform);
 	//listener.lookupTransform("/base_footprint", "/openni_rgb_optical_frame", ros::Time(0), stamped_transform);
-	listener.lookupTransform(map_frame, "/openni_rgb_optical_frame", ros::Time(0), stamped_transform);
+	//listener.lookupTransform(map_frame, "/openni_rgb_optical_frame", ros::Time(0), stamped_transform);
+	listener.lookupTransform(map_frame, "/camera_rgb_optical_frame", ros::Time(0), stamped_transform);
 	map_transform = toEigenTransform(stamped_transform.asBt());
 	listener.lookupTransform(base_frame, map_frame, ros::Time(0), stamped_transform);
 	map_to_base_transform = toEigenTransform(stamped_transform.asBt());
@@ -129,6 +136,10 @@ void TabletopTrackerROS::publish() {
 //		 cyl_pub.publish(tc);
 
 	}
+	
+	std_msgs::Float32 f;
+	f.data = table_height;
+	table_height_pub.publish(f);
 
 	// tc.table = table;
 	// tc.objects = objects;

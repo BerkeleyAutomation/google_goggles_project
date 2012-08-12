@@ -17,11 +17,15 @@
 
 using namespace std;
 
+static tf::TransformListener* listener;
 
 
 //TabletopTrackerROS* tracker;
+static ros::Subscriber cloud_sub;
 static ColorCloudPtr latest_cloud(new ColorCloud());
 static string latest_cloud_frame;
+
+ros::Publisher cloud_pub;
 
 ros::Publisher pose_pub;
 ros::Publisher grasp_pub;
@@ -112,8 +116,12 @@ void callback(const sensor_msgs::PointCloud2& msg) {
 }
 
 void save_current_cloud_callback(const sensor_msgs::PointCloud2& msg) {
+	std::cout << "Got current cloud" << std::endl;
 	latest_cloud_frame = msg.header.frame_id;
 	//pcl::fromROSMsg(msg, *latest_cloud); return;
+	
+	tf::StampedTransform stamped_transform;
+	listener->lookupTransform("/base_link", "/camera_rgb_optical_frame", ros::Time(0), stamped_transform);
 
 	ColorCloudPtr cloud(new ColorCloud());
 	ColorCloudPtr table_hull;
@@ -124,6 +132,7 @@ void save_current_cloud_callback(const sensor_msgs::PointCloud2& msg) {
 
 	pcl::fromROSMsg(msg, *cloud);
 	table_height = getTableHeight(cloud);
+	std::cout << "table height: " << table_height << std::endl;
 
 	ColorCloudPtr in_table = getTablePoints(cloud, table_height);
 	in_table = getBiggestCluster(in_table, TableConfig::TABLE_CLUSTERING_TOLERANCE);
@@ -134,7 +143,11 @@ void save_current_cloud_callback(const sensor_msgs::PointCloud2& msg) {
 	
 	*latest_cloud = *on_table;
 	
+	sensor_msgs::PointCloud2 cloud_msg;
+	cloud_msg.header = msg.header;
+	pcl::toROSMsg(*latest_cloud,cloud_msg);
 	
+	cloud_pub.publish(cloud_msg);
 }
 
 int main(int argc, char* argv[]) {
@@ -144,6 +157,15 @@ int main(int argc, char* argv[]) {
 	parser.read(argc, argv);
 
 	ros::NodeHandle nh;
+	
+	listener = new tf::TransformListener();
+	std::cout << "waiting for transform" << std::endl;
+	bool ret = listener->waitForTransform("/base_link", "/camera_rgb_optical_frame", ros::Time(0),ros::Duration(30.0));
+	std::cout << "got transform " << ret << std::endl;
+	
+	cloud_sub = nh.subscribe("/camera/depth_registered/points",1,&save_current_cloud_callback);
+	
+	cloud_pub = nh.advertise<sensor_msgs::PointCloud2>("google_goggles/object",1);
 
 	pose_pub = nh.advertise<geometry_msgs::PoseStamped>("google_goggles/object_pose",1);
 	grasp_pub = nh.advertise<geometry_msgs::PoseStamped>("google_goggles/grasp_pose",1);

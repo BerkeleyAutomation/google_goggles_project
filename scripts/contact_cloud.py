@@ -1,15 +1,39 @@
 #!/usr/bin/env python
-import roslib
-roslib.load_manifest('google_goggles')
-import rospy
-import os, sys, tempfile
-import cv
-from std_msgs.msg import String
-from sensor_msgs.msg import Image
-from cv_bridge import CvBridge, CvBridgeError
-import time
 
-import urllib, urllib2
+import roslib
+roslib.load_manifest("google_goggles")
+
+import sys, os, time, tempfile
+from optparse import OptionParser
+import urllib, urllib2, json
+from collections import defaultdict
+
+from math import *
+import numpy
+import rospy
+
+import cv
+from geometry_msgs.msg import *
+from sensor_msgs.msg import Image, PointCloud2
+from std_msgs.msg import Float32
+from cv_bridge import CvBridge, CvBridgeError
+import tf
+import tf.transformations as tft
+
+from brett2.PR2 import PR2
+import openravepy
+
+from actionlib import SimpleActionClient, SimpleGoalState
+from arm_navigation_msgs.msg import *
+
+from pr2_simple_motions_srvs.srv import *
+from pr2_common_action_msgs.msg import *
+from pr2_controllers_msgs.msg import *
+from std_srvs.srv import Empty
+import actionlib
+
+def parseResponse(res):
+	return json.loads(res.replace("status","'status'").replace("image_label","'image_label'").replace("match_score","'match_score'").replace("image_id","'image_id'").replace("'",'"'))
 
 class GoogleGogglesConnector(object):
 
@@ -38,7 +62,7 @@ class GoogleGogglesConnector(object):
                 {"label": label, "serverid": 1})
         request = GoogleGogglesConnector._prepare_request(url, img_path)
         res = urllib2.urlopen(request).read().strip()
-        return res
+        return parseResponse(res)
 
     @staticmethod
     def match(img_path):
@@ -46,98 +70,257 @@ class GoogleGogglesConnector(object):
                 GoogleGogglesConnector.SERVER + GoogleGogglesConnector.MATCH,
                 {"serverid": 1})
         request = GoogleGogglesConnector._prepare_request(url, img_path)
+        print "requesting..."
+        #print request.header_items()
         res = urllib2.urlopen(request).read().strip()
-        return res
+        return parseResponse(res)
 
 class image_tester:
-
-	def __init__(self,argv,test):
-		#self.image_pub = rospy.Publisher("image_topic_2",Image)
-
-		#cv.NamedWindow("raw", 1)
+	def __init__(self,options):
+		self.options = options
 		cv.NamedWindow("cropped", 1)
 		self.bridge = CvBridge()
 		#self.image_sub = rospy.Subscriber("/wide_stereo/left/image_color",Image,self.callback)
 		self.image_sub = rospy.Subscriber("/prosilica/image_color",Image,self.callback)
 		self.image = None
 		self.cropped_image = None
-		self.interval = rospy.Duration(1)
+		self.interval = rospy.Duration(options.interval)
 		self.last_test_time = None
-		self.name = "img"
-		self.folder = "../data/images"
 		self.crop_size = None
 		self.crop_offset = (0,0)
-		self.test = test
+		self.test = options.test
+		self.num_tests = 0
 		
-		if len(argv) >= 1:
-			self.name = argv[0]
-			
-		if len(argv) >= 2:
-			self.interval = rospy.Duration(int(argv[1]))
+		if options.crop_size is not None:
+			sz = options.crop_size.split('x')
+			self.crop_size = (int(sz[0]),int(sz[1]))
 		
-		if len(argv) >= 3:
-			self.crop_size = (int(argv[2]),int(argv[3]))
+		if options.crop_center:
+			self.crop_offset = ((2050 - self.crop_size[0])/2,(2448 - self.crop_size[1])/2)
 		
-		if len(argv) >= 5:
-			try:
-				self.crop_offset = (int(argv[4]), int(argv[5]))
-			except:
-				if argv[4] == "center":
-					self.crop_offset = ((2050 - self.crop_size[0])/2,(2448 - self.crop_size[1])/2)
-					if len(argv) >= 6:
-						self.crop_offset = (self.crop_offset[0] + int(argv[5]),self.crop_offset[1] + int(argv[6]))
+		if options.crop_offset is not None:
+			offset = options.crop_offset.split("x")
+			self.crop_offset = (self.crop_offset[0] + int(offset[0]),self.crop_offset[1] + int(offset[1]))
 		
-		roslib.log_msg("Testing images at interval %d" % (self.folder,self.name,self.interval.to_sec()))
+		rospy.loginfo("Testing images at interval {0}".format(self.interval.to_sec()))
 		if self.crop_size is not None:
-			roslib.log_msg("Crop is %s with offset %s" % (self.crop_size,self.crop_offset))
-		#rospy.init_node('image_saver', anonymous=True)
+			rospy.loginfo("Crop is {0} with offset {1}".format(self.crop_size,self.crop_offset))
 
 	def callback(self,data):
-		if self.last_test_time is None or (data.header.stamp - self.last_test_time > self.interval):
+		if self.options.max and self.num_tests >= self.options.max:
+			cv.WaitKey(3)
+			return
+		process = self.last_test_time is None or (data.header.stamp - self.last_test_time > self.interval)
+		if process:
 			try:
 				self.image = self.bridge.imgmsg_to_cv(data, "bgr8")
 			except CvBridgeError, e:
 				print e
 			
+			time_str = time.strftime("%H:%M:%S",time.localtime(data.header.stamp.to_time()))
+			
 			if self.crop_size is None:
 				self.cropped_image = self.image
 			else:
 				self.cropped_image = self.image[self.crop_offset[0]:self.crop_offset[0]+self.crop_size[0],self.crop_offset[1]:self.crop_offset[1]+self.crop_size[1]]
-			
-			stamp = data.header.stamp.to_time()
-			#filename = self.name + "_" + time.strftime("%Y_%m_%d_T%H_%M_%S",time.localtime(stamp))
-			tmp = tempfile.TemporaryFile()
-			filename = tmp.name + ".jpg"
-			if self.test:
-				print "got image of size (%d,%d)" % (self.image.cols,self.image.rows)
-			else:
-				print "savtesting ing image of size (%d,%d)" % (self.image.cols,self.image.rows)
-				cv.SaveImage(filename,self.cropped_image)
-				res = GoogleGogglesConnector.match(filename)
-				#TODO: display
-			self.last_test_time = data.header.stamp
-
+		
 		#cv.ShowImage("raw", self.image)
 		cv.ShowImage("cropped", self.cropped_image)
 		cv.WaitKey(3)
+		
+		if process:
+			stamp = data.header.stamp.to_time()
+			#filename = self.name + "_" + time.strftime("%Y_%m_%d_T%H_%M_%S",time.localtime(stamp))
+			tmp = tempfile.NamedTemporaryFile(dir='/tmp')
+			filename = tmp.name + ".jpg"
+			rospy.loginfo("got image of size ({0},{1}) with stamp {2}".format(self.image.cols,self.image.rows,time_str))
+			if not self.test:
+				cv.SaveImage(filename,self.cropped_image)
+				if self.options.learn_image:
+					print "learning..."
+					res = GoogleGogglesConnector.learn(filename,self.options.learn_image)
+				else:
+					print "testing..."
+					res = GoogleGogglesConnector.match(filename)
+				#TODO: display
+				print res
+			tmp.close()
+			self.last_test_time = data.header.stamp
+			self.num_tests += 1
+		
+		if self.options.max and self.num_tests >= self.options.max:
+			print "max number of tests reached"
 
-
-
-def main(argv):
-	rospy.init_node('image_tester', anonymous=True)
-	arg_start = 1
-	test = False
-	if len(argv) > 1 and argv[1] == "test":
-		print "not saving"
-		test = True
-		arg_start = 2
-	ic = image_tester(argv[arg_start:],test)
+class Grasper:
+	pr2 = None
 	
-	try:
-		rospy.spin()
-	except KeyboardInterrupt:
-		print "Shutting down"
-	cv.DestroyAllWindows()
+	def __init__(self):
+		self.move_arm = SimpleActionClient('move_right_arm', MoveArmAction)
+		
+		self.table_height = None
+
+	def grasp_pose_callback(self,msg):
+		print "called", self.table_height
+		if not self.table_height: return
+		base_frame = 'base_footprint'
+		
+		rospy.loginfo("opening gripper")
+		self.pr2.rgrip.open()
+		rospy.sleep(1.5)
+		
+		(tf_trans,tf_rot) = self.pr2.tf_listener.lookupTransform(msg.header.frame_id,base_frame,rospy.Time(0))
+		msg_tf = numpy.mat(numpy.dot(tft.translation_matrix(tf_trans),tft.quaternion_matrix(tf_rot)))
+		
+		rospy.loginfo("moving arm")
+		q = numpy.array([msg.pose.orientation.x,msg.pose.orientation.y,msg.pose.orientation.z,msg.pose.orientation.w])
+		p = numpy.array([msg.pose.position.x,msg.pose.position.y,msg.pose.position.z])
+		rot = numpy.mat(tft.quaternion_matrix(q))
+		trans = numpy.mat(tft.translation_matrix(p))
+		pose = msg_tf * trans * rot
+		
+		pose_x = pose[0,3]
+		pose_y = pose[1,3]
+		pose_z = pose[2,3]
+		
+		x_axis = (pose * numpy.matrix([1,0,0,1]).transpose())[0:3]
+		
+		init_dist = 0.1
+		#first_pose = pose * tft.translation_matrix(-init_dist * x_axis.transpose())
+		first_pose = pose * tft.translation_matrix(numpy.array([0,0,0.3]))
+		
+		for body in self.pr2.env.GetBodies():
+			if body.GetName() == 'table': break
+		else:
+			rospy.loginfo('adding table to openrave env')
+			body = openravepy.RaveCreateKinBody(self.pr2.env,'')
+			body.SetName('table')
+			body.InitFromBoxes(numpy.array([[pose_x,pose_y,self.table_height/2,0.25,1,self.table_height/2]]),False)
+			self.pr2.env.AddKinBody(body)
+		
+		
+		qt,pt = (tft.quaternion_from_matrix(first_pose),tft.translation_from_matrix(first_pose)) 
+		#pr2.rarm.set_cart_target(qt,pt,msg.header.frame_id) #quat, xyz, ref_frame
+		#joints = pr2.rarm.cart_to_joint(numpy.array(first_pose,base_frame,'r_gripper_tool_frame')
+		print "first_pose:"
+		print numpy.array(first_pose)
+		
+		filteropts = openravepy.openravepy_int.IkFilterOptions.CheckEnvCollisions
+		filteropts = filteropts | openravepy.openravepy_int.IkFilterOptions.IgnoreSelfCollisions
+		
+		self.pr2.rarm.goto_pose_matrix(numpy.array(first_pose),base_frame,'r_gripper_tool_frame',filteroptions=filteropts); rospy.sleep(10)
+		
+		print "second pose:"
+		print numpy.array(pose)
+		#pr2.rarm.set_cart_target(tft.quaternion_from_matrix(pose),tft.translation_from_matrix(pose),msg.header.frame_id)
+		self.pr2.rarm.goto_pose_matrix(numpy.array(pose),base_frame,'r_gripper_tool_frame'); rospy.sleep(5)
+		
+		rospy.loginfo("closing gripper")
+		#pr2.rgrip.close(); rospy.sleep(3)
+		
+		rospy.loginfo("reseting")
+		self.pr2.rarm.goto_posture('side')
+		self.pr2.rgrip.open()
+
+	def table_height_callback(self,msg):
+		if not self.table_height: rospy.loginfo("got table height: %f" % msg.data)
+		self.table_height = msg.data
 
 if __name__ == "__main__":
-	main(sys.argv)
+	parser = OptionParser()
+	parser.add_option("--test",dest="test",action="store_true",default=False)
+	
+	parser.set_defaults(ros=False)
+	parser.add_option("--ros",dest="ros",action="store_true")
+	parser.add_option("--no-ros",dest="ros",action="store_false")
+	
+	
+	parser.add_option("-t","--test-files", action="store_true",default=False, help="use files")
+	
+	parser.add_option("-l", "--learn",action="append",default=[],
+					help="learn image FILE",metavar="FILE")
+	parser.add_option("--learn-image",help='learn image from camera',metavar="LABEL")
+					
+	
+	parser.add_option("--max",type='int',default=0)
+	parser.add_option("--single",action="store_const",dest="max",const=1)
+	
+	parser.add_option("-i","--interval",type="float",default=5)
+	
+	parser.add_option('-s',"--size",dest="crop_size",help="image crop size WxH");
+	
+	parser.add_option("-c","--center",dest="crop_center",action="store_true",default=False);
+	parser.add_option("-o","--offset",dest="crop_offset")
+	
+	parser.add_option("-g","--grasp",action="store_true",default=False, help="Run grasping");
+	
+	(options, args) = parser.parse_args()
+	
+	if options.learn_image:
+		options.max=1
+	
+	print options
+	print args
+	
+	learnfiles = options.learn
+	testfiles = []
+	
+	if options.test_files:
+		if not args:
+			parser.error("No files given for testing!")
+		testfiles = args
+	elif options.learn:
+		learnfiles = learnfiles + args
+	
+	for (idx,learnfile) in enumerate(learnfiles):
+		label = learnfile.split("_")[0]
+		print "learning {0} from file {1} ({2}/{3})".format(label,learnfile,idx+1,len(learnfiles))
+		res = GoogleGogglesConnector.learn(learnfile,label)
+		print res
+		if idx != len(learnfiles)-1: time.sleep(5)
+	
+	if options.test_files:
+		total_successes = 0
+		label_successes = defaultdict(int)
+		label_total = defaultdict(int)
+		for (idx,testfile) in enumerate(testfiles):
+			label = (testfile.split("/")[-1]).split("_")[0]
+			label_total[label] = label_total[label] + 1
+			print "testing file {0} ({1}/{2})".format(testfile,idx+1,len(testfiles))
+			res = GoogleGogglesConnector.match(testfile)
+			success = res['image_label'] == label
+			if success:
+				print 'success!'
+				total_successes += 1
+				label_successes[label] = label_successes[label] + 1
+			else:
+				print 'failure :('
+			if idx != len(testfiles)-1: time.sleep(5)
+		print 'successes: {0}/{1}'.format(total_successes,len(testfiles))
+		for label in label_successes.keys():
+			print "  {0}: {1}/{2}".format(label,label_successes[label],label_total[label])
+	elif options.ros:
+		rospy.init_node('image_tester', anonymous=True)
+		image_tester(options)
+		
+		rospy.loginfo('starting pr2')
+		
+		if options.grasp:
+			grasper = Grasper()
+			#grasper.pr2 = PR2()
+			rospy.Subscriber("/google_goggles/grasp_pose", PoseStamped, grasper.grasp_pose_callback)
+			rospy.Subscriber("/google_goggles/table_height", Float32, grasper.table_height_callback)
+		
+		rospy.loginfo('ready')
+		rospy.spin()
+
+def nothing():
+	import rospy
+	rospy.init_node('benk',anonymous=True,disable_signals=True)
+	import roslib
+	roslib.load_manifest('tf')
+	import tf.transformations as tft
+	import numpy
+	from brett2.PR2 import PR2
+
+	q = numpy.array([0.0037790022003,0.0621387511329,0.624889472514,0.778228364249])
+	p = numpy.array([0.516622185707,0.0262447148561,0.845655560493])

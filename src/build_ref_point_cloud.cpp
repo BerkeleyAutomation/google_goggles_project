@@ -13,7 +13,7 @@ int main(int argc, char* argv[]) {
 	parser.read(argc, argv);
 
 	ros::NodeHandle nh;
-	TabletopTrackerROS tracker(nh);
+	TabletopTrackerROS tracker(nh,TabletopTracker::COMBINE);
 	ROS_INFO("Tracker ready");
 
 	ros::Duration(1).sleep();
@@ -35,12 +35,19 @@ int main(int argc, char* argv[]) {
 		}
 	}
 	
+	bool skipWrite = false;
+	
 	stringstream ss;
 	if (argc >= 2) {
 		ss << argv[1];
+		if (ss.str() == "nowrite") {
+			skipWrite = true;
+		}
 	} else {
 		ss << "points";
 	}
 	ss << "_" << (int)ros::Time::now().toSec() << ".pcd";
-	tracker.write(ss.str());
+	if (!skipWrite) {
+		tracker.write(ss.str());
+	}
 }

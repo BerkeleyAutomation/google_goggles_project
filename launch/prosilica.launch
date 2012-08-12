@@ -1,0 +1,14 @@
+<launch>
+
+  <arg name="camera" value="prosilica" />
+
+  <include file="$(find prosilica_camera)/launch/generic.launch">
+    <arg name="camera"       value="$(arg camera)" />
+    <arg name="ip_address"   value="10.68.0.20" />
+    <arg name="trigger_mode" value="polled" />
+    <arg name="frame_id"     value="high_def_optical_frame" />
+  </include>
+
+  <node ns="$(arg camera)" pkg="image_proc" type="image_proc" respawn="false" name="prosilica_image_proc" />
+
+</launch>

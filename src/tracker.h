@@ -4,6 +4,9 @@
 
 class TabletopTracker {
 public:
+	enum Mode { TRACK, COMBINE };
+	Mode mode;
+	
 	bool initialized;
 
 	Eigen::Affine3f map_transform;
@@ -28,7 +31,7 @@ public:
 	std::vector<Eigen::VectorXf> cylinder_params;
 	Eigen::MatrixXf circle_centers;
 
-	TabletopTracker() : initialized(false) {}
+	TabletopTracker(Mode theMode=TRACK) : mode(theMode), initialized(false) {}
 	void setLatest(ColorCloudPtr);
 	virtual void updateTransform() = 0; // set transform using latest cloud
 	void updateCloud(); // update transformed_cloud using transform

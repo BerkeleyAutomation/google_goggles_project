@@ -7,7 +7,7 @@
   <author>Ben Kehoe</author>
   <license>BSD</license>
   <review status="unreviewed" notes=""/>
-  <url>http://ros.org/wiki/google_goggles</url>
+  <url>http://github.com/BerkeleyAutomation/google-goggles</url>
   <depend package="rospy"/>
   <depend package="roscpp"/>
   <depend package="sensor_msgs"/>
@@ -20,6 +20,12 @@
   <depend package="tf"/>
   <depend package="tf_conversions"/>
   <depend package="geometry_msgs"/>
+  <depend package="actionlib"/>
+  <depend package="arm_navigation_msgs"/>
+  <depend package="move_arm"/>
+  <depend package="pr2_simple_motions_msgs"/>
+  <depend package="pr2_simple_arm_motions"/>
+  <depend package="pr2_simple_head_motions"/>
   <!--depend package="rll_utils"/-->
   <!--depend package="pr2_simple_motions_msgs"/-->
   <!--depend package="pr2_simple_arm_motions"/-->
