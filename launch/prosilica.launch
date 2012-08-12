@@ -1,11 +1,21 @@
 <launch>
 
-  <arg name="camera" value="prosilica" />
+  <arg name="camera" default="prosilica" />
+
+    <group ns="/prosilica_driver">
+    <param name="auto_gain" value="false"/>
+    <param name="auto_exposure" value="false"/>
+    <param name="exposure" value="0.17"/>
+    <param name="height" value="800"/>
+    <param name="width" value="800"/>
+    <param name="x_offset" value="924"/>
+    <param name="y_offset" value="600"/>
+  </group>
 
   <include file="$(find prosilica_camera)/launch/generic.launch">
     <arg name="camera"       value="$(arg camera)" />
     <arg name="ip_address"   value="10.68.0.20" />
-    <arg name="trigger_mode" value="polled" />
+    <arg name="trigger_mode" value="streaming" />
     <arg name="frame_id"     value="high_def_optical_frame" />
   </include>
 
