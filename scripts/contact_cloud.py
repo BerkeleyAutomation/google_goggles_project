@@ -89,7 +89,12 @@ class image_tester:
 		self.crop_size = None
 		self.crop_offset = (0,0)
 		self.test = options.test
-		self.num_tests = 0
+		self.total_tests = 0
+		
+		self.total_successes = 0
+		self.total_tests = 0
+		self.label_successes = defaultdict(int)
+		self.label_total = defaultdict(int)
 		
 		if options.crop_size is not None:
 			sz = options.crop_size.split('x')
@@ -107,7 +112,7 @@ class image_tester:
 			rospy.loginfo("Crop is {0} with offset {1}".format(self.crop_size,self.crop_offset))
 
 	def callback(self,data):
-		if self.options.max and self.num_tests >= self.options.max:
+		if self.options.max and self.total_tests >= self.options.max:
 			cv.WaitKey(3)
 			return
 		process = self.last_test_time is None or (data.header.stamp - self.last_test_time > self.interval)
@@ -139,16 +144,46 @@ class image_tester:
 				if self.options.learn_image:
 					print "learning..."
 					res = GoogleGogglesConnector.learn(filename,self.options.learn_image)
+					self.total_tests += 1
+					if res['status'] == 'SUCCESS':
+						print 'success! label is {0}'.format(res['image_label'])
+					else:
+						print 'failure :('
 				else:
 					print "testing..."
 					res = GoogleGogglesConnector.match(filename)
-				#TODO: display
-				print res
+					res_label = res['image_label']
+					if res_label:
+						self.label_total[res_label] += 1
+					else:
+						self.label_total['FAILURE'] += 1
+					self.total_tests += 1
+					
+					if self.options.label:
+						test_label = self.options.label
+						success = res_label == test_label
+						if success:
+							print 'successful recognition of {0}!'.format(test_label)
+							self.total_successes += 1
+							#self.label_successes[test_label] = self.label_successes[test_label] + 1
+						elif res_label:
+							print 'failure, recognized as {0}'.format(res_label)
+						else:
+							print 'failure :('
+					else:
+						if res['status'] == 'SUCCESS':
+							print 'success! label is {0}'.format(res['image_label'])
+							self.total_successes += 1
+						else:
+							print 'failure :('
+					print 'successes: {0}/{1}'.format(self.total_successes,self.total_tests)
+					for label in self.label_total.keys():
+						print "  {0}: {1}".format(label,self.label_total[label])
+					
 			tmp.close()
 			self.last_test_time = data.header.stamp
-			self.num_tests += 1
 		
-		if self.options.max and self.num_tests >= self.options.max:
+		if self.options.max and self.total_tests >= self.options.max:
 			print "max number of tests reached"
 
 class Grasper:
@@ -236,6 +271,8 @@ if __name__ == "__main__":
 	
 	parser.add_option("-t","--test-files", action="store_true",default=False, help="use files")
 	
+	parser.add_option("--label", help='label to test against')
+	
 	parser.add_option("-l", "--learn",action="append",default=[],
 					help="learn image FILE",metavar="FILE")
 	parser.add_option("--learn-image",help='learn image from camera',metavar="LABEL")
@@ -244,7 +281,7 @@ if __name__ == "__main__":
 	parser.add_option("--max",type='int',default=0)
 	parser.add_option("--single",action="store_const",dest="max",const=1)
 	
-	parser.add_option("-i","--interval",type="float",default=5)
+	parser.add_option("-i","--interval",type="float",default=4.5)
 	
 	parser.add_option('-s',"--size",dest="crop_size",help="image crop size WxH");
 	
@@ -256,7 +293,10 @@ if __name__ == "__main__":
 	(options, args) = parser.parse_args()
 	
 	if options.learn_image:
-		options.max=1
+		ans = raw_input('Are you sure you want to learn images with label {0}? '.format(options.learn_image))
+		if ans != 'y' and ans != 'Y':
+			exit(1)
+		pass #options.max=1
 	
 	print options
 	print args
@@ -272,7 +312,10 @@ if __name__ == "__main__":
 		learnfiles = learnfiles + args
 	
 	for (idx,learnfile) in enumerate(learnfiles):
-		label = learnfile.split("_")[0]
+		if options.label:
+			label = options.label
+		else:
+			label = learnfile.split("_")[0]
 		print "learning {0} from file {1} ({2}/{3})".format(label,learnfile,idx+1,len(learnfiles))
 		res = GoogleGogglesConnector.learn(learnfile,label)
 		print res
@@ -280,11 +323,11 @@ if __name__ == "__main__":
 	
 	if options.test_files:
 		total_successes = 0
+		total_tests = 0
 		label_successes = defaultdict(int)
 		label_total = defaultdict(int)
 		for (idx,testfile) in enumerate(testfiles):
 			label = (testfile.split("/")[-1]).split("_")[0]
-			label_total[label] = label_total[label] + 1
 			print "testing file {0} ({1}/{2})".format(testfile,idx+1,len(testfiles))
 			res = GoogleGogglesConnector.match(testfile)
 			success = res['image_label'] == label
@@ -294,8 +337,10 @@ if __name__ == "__main__":
 				label_successes[label] = label_successes[label] + 1
 			else:
 				print 'failure :('
+			label_total[label] = label_total[label] + 1
+			total_tests += 1
 			if idx != len(testfiles)-1: time.sleep(5)
-		print 'successes: {0}/{1}'.format(total_successes,len(testfiles))
+		print 'successes: {0}/{1}'.format(total_successes,total_tests)
 		for label in label_successes.keys():
 			print "  {0}: {1}/{2}".format(label,label_successes[label],label_total[label])
 	elif options.ros:
@@ -312,6 +357,8 @@ if __name__ == "__main__":
 		
 		rospy.loginfo('ready')
 		rospy.spin()
+		
+		print "shutting down"
 
 def nothing():
 	import rospy
