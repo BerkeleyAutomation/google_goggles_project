@@ -39,31 +39,31 @@ add_definitions("-DEIGEN_DEFAULT_TO_ROW_MAJOR")
 
 #common commands for building c++ executables and libraries
 rosbuild_add_library(google_goggles_point_cloud
-  src/cloud_ops.cpp
-  src/plane_finding.cpp
-  src/utils_cv.cpp
-  src/utils_pcl.cpp
-  src/tracker.cpp
-  src/tracker_ros.cpp
-  src/dist_math.cpp
-  src/table.cpp
-  src/config.cpp
-  src/table_config.cpp
+  src/tracker/cloud_ops.cpp
+  src/tracker/plane_finding.cpp
+  src/tracker/utils_cv.cpp
+  src/tracker/utils_pcl.cpp
+  src/tracker/tracker.cpp
+  src/tracker/tracker_ros.cpp
+  src/tracker/dist_math.cpp
+  src/tracker/table.cpp
+  src/tracker/config.cpp
+  src/tracker/table_config.cpp
 )
 target_link_libraries(google_goggles_point_cloud ${OpenCV_LIBS} boost_program_options)
 #rosbuild_add_boost_directories()
 #rosbuild_link_boost(${PROJECT_NAME} thread)
 
-rosbuild_add_executable(build_ref_point_cloud src/build_ref_point_cloud.cpp)
-target_link_libraries(build_ref_point_cloud google_goggles_point_cloud)
+#rosbuild_add_executable(build_ref_point_cloud src/build_ref_point_cloud.cpp)
+#target_link_libraries(build_ref_point_cloud google_goggles_point_cloud)
 
-rosbuild_add_executable(icp_test src/icp_test.cpp)
+#rosbuild_add_executable(icp_test src/icp_test.cpp)
 
-rosbuild_add_executable(convert_cloud src/convert_cloud.cpp)
-target_link_libraries(convert_cloud google_goggles_point_cloud)
+#rosbuild_add_executable(convert_cloud src/convert_cloud.cpp)
+#target_link_libraries(convert_cloud google_goggles_point_cloud)
 
-rosbuild_add_executable(process_ref_cloud src/process_ref_point_cloud.cpp)
-target_link_libraries(process_ref_cloud google_goggles_point_cloud)
+#rosbuild_add_executable(process_ref_cloud src/process_ref_point_cloud.cpp)
+#target_link_libraries(process_ref_cloud google_goggles_point_cloud)
 
 rosbuild_add_executable(pose_estimator src/pose_estimator.cpp)
 target_link_libraries(pose_estimator google_goggles_point_cloud)

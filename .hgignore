@@ -6,8 +6,9 @@ syntax: glob
 bin/
 build/
 lib/
-data/
+data*/
 src/backup_*/
 scripts/backup_*/
 Makefile
 
+.*project

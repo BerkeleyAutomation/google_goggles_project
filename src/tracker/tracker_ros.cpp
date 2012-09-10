@@ -28,7 +28,7 @@ TabletopTrackerROS::TabletopTrackerROS(ros::NodeHandle nh,TabletopTracker::Mode 
 	cluster_pub = nh.advertise<sensor_msgs::PointCloud2>("google_goggles/clusters",100);
 	//cyl_pub = nh.advertise<misc_msgs::TrackedCylinders>("spinning_tabletop/cylinders",100);
 	//cloud_sub = nh.subscribe("input_cloud",1,&TabletopTrackerROS::callback, this);
-	table_height_pub = nh.advertise<std_msgs::Float32>("google_goggles/table_height",1);
+	table_height_pub = nh.advertise<std_msgs::Float32>("google_goggles/table_height",1,true);
 	cloud_sub = nh.subscribe("/camera/depth_registered/points",1,&TabletopTrackerROS::callback, this);
 	
 	map_frame = "/base_footprint";

@@ -3,7 +3,7 @@
 import roslib
 roslib.load_manifest("google_goggles")
 
-import sys, os, time, tempfile
+import sys, os, time, tempfile, os.path
 from optparse import OptionParser
 import urllib, urllib2, json
 from collections import defaultdict
@@ -11,6 +11,7 @@ from collections import defaultdict
 from math import *
 import numpy
 import rospy
+import rosbag
 
 import cv
 from geometry_msgs.msg import *
@@ -34,6 +35,18 @@ import actionlib
 
 def parseResponse(res):
 	return json.loads(res.replace("status","'status'").replace("image_label","'image_label'").replace("match_score","'match_score'").replace("image_id","'image_id'").replace("'",'"'))
+
+TIME_FORMAT = "%Y-%m-%d-T%H-%M-%S"
+
+RESULTS_STRING_FMT = '{test_type} {success} {input_label} {output_label} {stamp} {filename}'
+def format_results(test_type,success,input_label,output_label,stamp,filename):
+	return RESULTS_STRING_FMT.format(
+		test_type=test_type,
+		success=success,
+		input_label=input_label,
+		output_label=output_label,
+		stamp=time.strftime(TIME_FORMAT,stamp),
+		filename=filename)
 
 class GoogleGogglesConnector(object):
 
@@ -81,7 +94,7 @@ class image_tester:
 		cv.NamedWindow("cropped", 1)
 		self.bridge = CvBridge()
 		#self.image_sub = rospy.Subscriber("/wide_stereo/left/image_color",Image,self.callback)
-		self.image_sub = rospy.Subscriber("/prosilica/image_color",Image,self.callback)
+		self.image_sub = rospy.Subscriber("/prosilica/image_rect_color",Image,self.callback)
 		self.image = None
 		self.cropped_image = None
 		self.interval = rospy.Duration(options.interval)
@@ -95,6 +108,21 @@ class image_tester:
 		self.total_tests = 0
 		self.label_successes = defaultdict(int)
 		self.label_total = defaultdict(int)
+		
+		self.results_file = None
+		if self.options.save_results:
+			results_file_prefix = 'results'
+			if self.options.save_results_to:
+				results_file_prefix = self.options.save_results_to
+				
+			results_file_name = results_file_prefix + '_' + time.strftime(TIME_FORMAT,time.localtime()) + '.txt'
+			try:
+				os.makedirs(os.path.dirname(results_file_name))
+				self.results_file = open(results_file_name,'w')
+			except os.error, e:
+				print e
+		
+		self.ref_cloud_pub = rospy.Publisher('/cloud_pcd',PointCloud2)
 		
 		if options.crop_size is not None:
 			sz = options.crop_size.split('x')
@@ -134,24 +162,38 @@ class image_tester:
 		cv.WaitKey(3)
 		
 		if process:
-			stamp = data.header.stamp.to_time()
-			#filename = self.name + "_" + time.strftime("%Y_%m_%d_T%H_%M_%S",time.localtime(stamp))
+			stamp = time.localtime(data.header.stamp.to_time())
+			stamp_string = time.strftime(TIME_FORMAT,stamp)
+			#filename = self.name + "_" + stamp_string
 			tmp = tempfile.NamedTemporaryFile(dir='/tmp')
 			filename = tmp.name + ".jpg"
 			rospy.loginfo("got image of size ({0},{1}) with stamp {2}".format(self.image.cols,self.image.rows,time_str))
 			if not self.test:
 				cv.SaveImage(filename,self.cropped_image)
-				if self.options.learn_image:
+				save_file_name = ''
+				if self.options.save_image:
+					save_file_name = self.save_image + "_" + stamp_string + ".jpg"
+					try:
+						os.makedirs(os.path.dirname(save_file_name))
+						cv.SaveImage(save_file_name,self.cropped_image)
+					except os.error, e:
+						print e
+				
+				results_string = None
+				if self.options.learn_image and not self.options.no_google:
 					print "learning..."
 					res = GoogleGogglesConnector.learn(filename,self.options.learn_image)
 					self.total_tests += 1
 					if res['status'] == 'SUCCESS':
 						print 'success! label is {0}'.format(res['image_label'])
+						results_string = format_results('LEARN','SUCCESS',self.options.learn_image,res['image_label'],stamp,save_file_name)
 					else:
 						print 'failure :('
-				else:
+						results_string = format_results('LEARN','FAILURE',self.options.learn_image,'~',stamp,save_file_name)
+				elif not self.options.no_google:
 					print "testing..."
 					res = GoogleGogglesConnector.match(filename)
+					print res
 					res_label = res['image_label']
 					if res_label:
 						self.label_total[res_label] += 1
@@ -166,19 +208,39 @@ class image_tester:
 							print 'successful recognition of {0}!'.format(test_label)
 							self.total_successes += 1
 							#self.label_successes[test_label] = self.label_successes[test_label] + 1
+							results_string = format_results('TEST','SUCCESS',self.options.label,res_label,stamp,save_file_name)
 						elif res_label:
 							print 'failure, recognized as {0}'.format(res_label)
+							results_string = format_results('TEST','FAILURE',self.options.label,res_label,stamp,save_file_name)
 						else:
 							print 'failure :('
+							results_string = format_results('TEST','FAILURE',self.options.label,'~',stamp,save_file_name)
 					else:
 						if res['status'] == 'SUCCESS':
-							print 'success! label is {0}'.format(res['image_label'])
+							label = res['image_label']
+							print 'success! label is {0}'.format(label)
 							self.total_successes += 1
+							
+							results_string = format_results('TEST','SUCCESS','~',label,stamp,save_file_name)
+							
+							print 'loading ref cloud'
+							ref_pc_dir = roslib.packages.get_pkg_subdir('google_goggles','data/points/ref')
+							filename = ref_pc_dir + '/' + label + '.bag'
+							
+							bag = rosbag.Bag(filename)
+							for topic,msg,t in bag.read_messages(topics=['/cloud_pcd']):
+								msg.header.stamp = rospy.Time.now()
+								print 'publishing...'
+								self.ref_cloud_pub.publish(msg)
+								break
 						else:
 							print 'failure :('
+							results_string = format_results('TEST','FAILURE','~','~',stamp,save_file_name)
 					print 'successes: {0}/{1}'.format(self.total_successes,self.total_tests)
 					for label in self.label_total.keys():
 						print "  {0}: {1}".format(label,self.label_total[label])
+				if results_string and self.results_file:
+					results_file.write(results_string + '\n')
 					
 			tmp.close()
 			self.last_test_time = data.header.stamp
@@ -190,7 +252,13 @@ class Grasper:
 	pr2 = None
 	
 	def __init__(self):
-		self.move_arm = SimpleActionClient('move_right_arm', MoveArmAction)
+		self.pr2 = PR2()
+		
+		rospy.loginfo("reseting")
+		self.pr2.rarm.goto_posture('side')
+		self.pr2.rgrip.open()
+		
+		#self.move_arm = SimpleActionClient('move_right_arm', MoveArmAction)
 		
 		self.table_height = None
 
@@ -223,6 +291,8 @@ class Grasper:
 		#first_pose = pose * tft.translation_matrix(-init_dist * x_axis.transpose())
 		first_pose = pose * tft.translation_matrix(numpy.array([0,0,0.3]))
 		
+		lift_pose = pose * tft.translation_matrix(numpy.array([0,0,0.3]))
+		
 		for body in self.pr2.env.GetBodies():
 			if body.GetName() == 'table': break
 		else:
@@ -242,19 +312,24 @@ class Grasper:
 		filteropts = openravepy.openravepy_int.IkFilterOptions.CheckEnvCollisions
 		filteropts = filteropts | openravepy.openravepy_int.IkFilterOptions.IgnoreSelfCollisions
 		
-		self.pr2.rarm.goto_pose_matrix(numpy.array(first_pose),base_frame,'r_gripper_tool_frame',filteroptions=filteropts); rospy.sleep(10)
+		self.pr2.rarm.goto_pose_matrix(numpy.array(first_pose),base_frame,'r_gripper_tool_frame',filter_options=filteropts); rospy.sleep(10)
 		
 		print "second pose:"
 		print numpy.array(pose)
 		#pr2.rarm.set_cart_target(tft.quaternion_from_matrix(pose),tft.translation_from_matrix(pose),msg.header.frame_id)
-		self.pr2.rarm.goto_pose_matrix(numpy.array(pose),base_frame,'r_gripper_tool_frame'); rospy.sleep(5)
+		self.pr2.rarm.goto_pose_matrix(numpy.array(pose),base_frame,'r_gripper_tool_frame',filter_options=filteropts); rospy.sleep(5)
 		
 		rospy.loginfo("closing gripper")
-		#pr2.rgrip.close(); rospy.sleep(3)
+		self.pr2.rgrip.close(); rospy.sleep(3)
 		
-		rospy.loginfo("reseting")
-		self.pr2.rarm.goto_posture('side')
-		self.pr2.rgrip.open()
+		print "lifting:"
+		print numpy.array(lift_pose)
+		#pr2.rarm.set_cart_target(tft.quaternion_from_matrix(pose),tft.translation_from_matrix(pose),msg.header.frame_id)
+		self.pr2.rarm.goto_pose_matrix(numpy.array(lift_pose),base_frame,'r_gripper_tool_frame',filter_options=filteropts); rospy.sleep(5)
+		
+		#rospy.loginfo("reseting")
+		#self.pr2.rarm.goto_posture('side')
+		#self.pr2.rgrip.open()
 
 	def table_height_callback(self,msg):
 		if not self.table_height: rospy.loginfo("got table height: %f" % msg.data)
@@ -268,15 +343,20 @@ if __name__ == "__main__":
 	parser.add_option("--ros",dest="ros",action="store_true")
 	parser.add_option("--no-ros",dest="ros",action="store_false")
 	
+	parser.add_option("--no-images",action="store_true",default=False)
+	
+	parser.add_option("--no-google",action="store_true",default=False)
 	
 	parser.add_option("-t","--test-files", action="store_true",default=False, help="use files")
 	
 	parser.add_option("--label", help='label to test against')
+	parser.add_option("--save-results",action="store_true",default=False)
+	parser.add_option("--save-results-to")
 	
 	parser.add_option("-l", "--learn",action="append",default=[],
 					help="learn image FILE",metavar="FILE")
 	parser.add_option("--learn-image",help='learn image from camera',metavar="LABEL")
-					
+	parser.add_option("--save-image",help='save image with prefix PREFIX',metavar='PREFIX')
 	
 	parser.add_option("--max",type='int',default=0)
 	parser.add_option("--single",action="store_const",dest="max",const=1)
@@ -292,14 +372,18 @@ if __name__ == "__main__":
 	
 	(options, args) = parser.parse_args()
 	
-	if options.learn_image:
+	if options.save_results_to:
+		options.save_results = True
+	
+	if options.learn_image and not options.max == 1:
 		ans = raw_input('Are you sure you want to learn images with label {0}? '.format(options.learn_image))
 		if ans != 'y' and ans != 'Y':
+			print 'ok, exiting'
 			exit(1)
 		pass #options.max=1
 	
-	print options
-	print args
+	#print options
+	#print args
 	
 	learnfiles = options.learn
 	testfiles = []
@@ -311,17 +395,33 @@ if __name__ == "__main__":
 	elif options.learn:
 		learnfiles = learnfiles + args
 	
-	for (idx,learnfile) in enumerate(learnfiles):
-		if options.label:
-			label = options.label
-		else:
-			label = learnfile.split("_")[0]
-		print "learning {0} from file {1} ({2}/{3})".format(label,learnfile,idx+1,len(learnfiles))
-		res = GoogleGogglesConnector.learn(learnfile,label)
-		print res
-		if idx != len(learnfiles)-1: time.sleep(5)
+	if options.learnfiles:
+		results_file = None
+		if options.save_results:
+			results_file_name = 'results_' + time.strftime(TIME_FORMAT,time.localtime()) + '.txt'
+			results_file = open(results_file_name,'w')
+		for (idx,learnfile) in enumerate(learnfiles):
+			if options.label:
+				label = options.label
+			else:
+				label = learnfile.split("_")[0]
+			print "learning {0} from file {1} ({2}/{3})".format(label,learnfile,idx+1,len(learnfiles))
+			res = GoogleGogglesConnector.learn(learnfile,label)
+			if results_file:
+				if res['status'] == 'SUCCESS':
+					results_string = format_results('LEARN','SUCCESS',label,res['image_label'],time.localtime(),learnfile)
+				else:
+					results_string = format_results('LEARN','FAILURE',label,'~',time.localtime(),learnfile)
+				results_file.write(results_string+'\n')
+			print res
+			if idx != len(learnfiles)-1: time.sleep(5)
+		if results_file: results_file.close()
 	
 	if options.test_files:
+		results_file = None
+		if options.save_results:
+			results_file_name = 'results_' + time.strftime(TIME_FORMAT,time.localtime()) + '.txt'
+			results_file = open(results_file_name,'w')
 		total_successes = 0
 		total_tests = 0
 		label_successes = defaultdict(int)
@@ -335,17 +435,21 @@ if __name__ == "__main__":
 				print 'success!'
 				total_successes += 1
 				label_successes[label] = label_successes[label] + 1
+				results_string = format_results('TEST','SUCCESS',label,res['image_label'],time.localtime(),testfile)
 			else:
 				print 'failure :('
+				results_string = format_results('TEST','FAILURE',label,res['image_label'],time.localtime(),testfile)
 			label_total[label] = label_total[label] + 1
 			total_tests += 1
 			if idx != len(testfiles)-1: time.sleep(5)
+			if results_file:
+				results_file.write(results_string+'\n')
 		print 'successes: {0}/{1}'.format(total_successes,total_tests)
 		for label in label_successes.keys():
 			print "  {0}: {1}/{2}".format(label,label_successes[label],label_total[label])
-	elif options.ros:
+		if results_file: results_file.close()
+	elif options.ros or options.learn_image:
 		rospy.init_node('image_tester', anonymous=True)
-		image_tester(options)
 		
 		rospy.loginfo('starting pr2')
 		
@@ -354,6 +458,10 @@ if __name__ == "__main__":
 			#grasper.pr2 = PR2()
 			rospy.Subscriber("/google_goggles/grasp_pose", PoseStamped, grasper.grasp_pose_callback)
 			rospy.Subscriber("/google_goggles/table_height", Float32, grasper.table_height_callback)
+		
+		
+		if not options.no_images:
+			image_tester(options)
 		
 		rospy.loginfo('ready')
 		rospy.spin()
