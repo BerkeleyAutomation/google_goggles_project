@@ -1,9 +1,5 @@
 #!/usr/bin/env python
 
-import roslib
-roslib.load_manifest('google_goggles')
-
-from objreco import GoogleGoggles
 from collections import defaultdict
 
 import sys, os, os.path, random, time
@@ -13,6 +9,82 @@ import pickle
 import numpy
 
 TIME_FORMAT = "%Y-%m-%d-T%H-%M-%S"
+
+import os.path, time
+import urllib, urllib2, json
+
+class GoogleGoggles(object):
+
+	SERVER = "http://amp.google.com/"
+	LEARN = "objreco/learn"
+	MATCH = "objreco/match"
+	CLEAR = "objreco/clear"
+	
+	LAST_CALL_TIME=None
+	MIN_CALL_INTERVAL=0.5
+	@staticmethod
+	def throttle():
+		now = time.mktime(time.localtime())
+		if not GoogleGoggles.LAST_CALL_TIME:
+			GoogleGoggles.LAST_CALL_TIME = now
+		next_call = (GoogleGoggles.LAST_CALL_TIME + GoogleGoggles.MIN_CALL_INTERVAL)
+		if GoogleGoggles.LAST_CALL_TIME and now < next_call:
+		   time.sleep(next_call-now)
+		GoogleGoggles.LAST_CALL_TIME = now
+
+	@staticmethod
+	def _prepare_request(url, img_path=None):
+		img_data=None
+		length=0
+		if img_path:
+			length = os.path.getsize(img_path)
+			img_data = open(img_path, "rb")
+		request = urllib2.Request(url, data=img_data)
+		request.add_header('Cache-Control', 'no-cache')
+		request.add_header('Content-Length', '%d' % length)
+		request.add_header('Content-Type', 'image/png')
+		return request
+
+	@staticmethod
+	def _prepare_url(base, params):
+		return base + "?" + urllib.urlencode(params)
+
+	@staticmethod
+	def parseResponse(res):
+	   return json.loads(res.replace("status","'status'").replace("image_label","'image_label'").replace("match_score","'match_score'").replace("image_id","'image_id'").replace("'",'"'))
+
+	@staticmethod
+	def learn(img_path, label):
+		GoogleGoggles.throttle()
+		url = GoogleGoggles._prepare_url( \
+				GoogleGoggles.SERVER + GoogleGoggles.LEARN,
+				{"label": label, "serverid": 1})
+		request = GoogleGoggles._prepare_request(url, img_path)
+		res = urllib2.urlopen(request).read().strip()
+		return GoogleGoggles.parseResponse(res)
+
+	@staticmethod
+	def match(img_path):
+		GoogleGoggles.throttle()
+		url = GoogleGoggles._prepare_url( \
+				GoogleGoggles.SERVER + GoogleGoggles.MATCH,
+				{"serverid": 1})
+		request = GoogleGoggles._prepare_request(url, img_path)
+		#print "requesting..."
+		#print request.header_items()
+		res = urllib2.urlopen(request).read().strip()
+		return GoogleGoggles.parseResponse(res)
+	
+	@staticmethod
+	def clear():
+		url = GoogleGoggles._prepare_url( \
+				GoogleGoggles.SERVER + GoogleGoggles.CLEAR,
+				{"serverid": 1})
+		request = GoogleGoggles._prepare_request(url)
+		#print "requesting..."
+		#print request.header_items()
+		res = urllib2.urlopen(request).read().strip()
+		return GoogleGoggles.parseResponse(res)
 
 def main(argv):
 	parser = OptionParser('%prog [OPTIONS]')
@@ -29,9 +101,21 @@ def main(argv):
 	parser.add_option("--num-rounds",type='int',default=0)
 	parser.add_option("--one-shot",dest='train-all',action='store_true')
 	parser.add_option("--validate-only",action='store_true',default=False)
+	parser.add_option("--validation-only",action='store_true',dest='validate-only')
 	parser.add_option('--train-all',action='store_true',default=False)
 	
+	
+	parser.add_option('--clear',action='store_true',default=False)
+	parser.add_option('--clear-first',action='store_true',default=False)
+	
 	(options,args) = parser.parse_args()
+	
+	if options.clear or options.clear_first:
+		print "clearing..."
+		res = GoogleGoggles.clear()
+		print res['status']
+		if not options.clear_first:
+			return
 	
 	if not options.training_dir:
 		options.training_dir = options.validation_dir
@@ -43,7 +127,7 @@ def main(argv):
 		if args:
 			options.training_dir = args
 		else:
-			options.training_dir = sorted(os.listdir(options.training_dir))
+			options.training_dir = sorted([os.path.join(options.training_dir,d) for d in os.listdir(options.training_dir) if os.path.isdir(os.path.join(options.training_dir,d))])
 		options.num_rounds = len(options.training_dir)
 		options.train_all = True
 	else:
@@ -66,17 +150,17 @@ def main(argv):
 		if idx != 0 and options.validate_only: continue
 		recurse = True
 		for f in os.listdir(image_dir):
-			if not os.path.isdir(f) and f.endswith('.jpg'):
+			if not os.path.isdir(os.path.join(image_dir,f)) and f.endswith('.jpg'):
 				recurse = False
 				break
 		
 		files = []
 		if recurse:
 			for object_name in os.listdir(image_dir):
-				if not os.path.isdir(object_name): continue
+				if not os.path.isdir(os.path.join(image_dir,object_name)): continue
 				
 				for f in sorted(os.listdir(os.path.join(image_dir,object_name))):
-					if not os.path.isdir(f) and f.endswith('.jpg'):
+					if (not os.path.isdir(f)) and f.endswith('.jpg'):
 						files.append(os.path.join(object_name,f))
 		else:
 			for f in sorted(os.listdir(image_dir)):
@@ -222,7 +306,7 @@ def main(argv):
 							t_dir = options.training_dir[round_num-1]
 						if not options.test:
 							try:
-								res = GoogleGoggles.learn(os.path.join(t_dir,img_to_learn[0],object_name))
+								res = GoogleGoggles.learn(os.path.join(t_dir,img_to_learn[0]),object_name)
 							except Exception, e:
 								print 'Exception occured during call to learn:',e
 								res = {'status':'EXCEPTION','exception':e}
@@ -230,10 +314,12 @@ def main(argv):
 							res = {'status':'SUCCESS'}
 						
 						learn_responses[-1].append((t_dir,img_to_learn,res))
+						print res['status']
 						if res['status'] != 'SUCCESS':
-							print 'failed!'
+							#print 'failed!'
+							print res
 							continue
-						print 'done'
+						#print 'done'
 					
 						images_not_learned.remove(img_to_learn)
 						images_learned_this_round.append(img_to_learn)
@@ -258,7 +344,7 @@ def main(argv):
 							learned_fields[field_val] = learned_fields[field_val] + 1
 						
 						for key,val in learned_fields.iteritems():
-							f.write("    %s: %d\n" % (key,val))
+							f.write("	%s: %d\n" % (key,val))
 				
 				for idx,field_name in enumerate(field_names):
 					if idx == 0: continue
@@ -295,7 +381,11 @@ def main(argv):
 					else:
 						res = {'status':'FAILURE','image_label':''}
 				match_responses[-1].append((options.validation_dir,img,res))
-				print 'done', success
+				if success:
+					print res['status']
+				else:
+					print res['status'], res['image_label']
+				#print 'done', success
 					
 				
 				data_this_round[idx,0] = int(success)
@@ -331,7 +421,7 @@ def main(argv):
 						tested_fields[field_val][1] = tested_fields[field_val][1] + 1
 					
 					for key,val in tested_fields.iteritems():
-						f.write("    %s: %d/%d\n" % (key,val[0],val[1]))
+						f.write("	%s: %d/%d\n" % (key,val[0],val[1]))
 			
 			for fieldidx,field_name in enumerate(field_names):
 				f.write('%s:\n' % field_name)
@@ -400,6 +490,9 @@ def main(argv):
 	if not options.validate_only:
 		print "Learned %d/%d images in %d steps" % (len(all_learned_images),num_training_images,num_rounds)
 		f.write("Learned %d/%d images in %d steps\n" % (len(all_learned_images),num_training_images,num_rounds))
+		for i in xrange(num_rounds):
+			print "  Round #%d Learned %d" % (i+1,len(images_learned[i]))
+			f.write("  Round #%d Learned %d\n" % (i+1,len(images_learned[i])))
 		
 		print "Did not learn %d images" % len(images_not_learned)
 		f.write("Did not learn %d images\n" % len(images_not_learned))
