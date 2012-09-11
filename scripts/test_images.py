@@ -178,11 +178,14 @@ def main(argv):
 			[f.write(img[0]+'\n') for img in training_images[0]]
 		else:
 			for idx,t_imgs in enumerate(training_images):
-				f.write('Round #%d\n' % idx)
+				f.write('Round #%d\n' % (idx+1))
 				[f.write(img[0]+'\n') for img in t_imgs]
 	
 	f.write('Validation images:\n')
 	[f.write(img[0]+'\n') for img in validation_images]
+	
+	learn_responses = []
+	match_responses = []
 	
 	try:
 		while images_not_learned or options.validate_only: #and not rospy.is_shutdown():
@@ -193,6 +196,7 @@ def main(argv):
 			
 			if not options.validate_only:
 				print 'Learning images...'
+				learn_responses.append([])
 				if len(training_images) == 1:
 					images_for_this_round = images_not_learned
 				else:
@@ -212,11 +216,23 @@ def main(argv):
 					
 					for img_to_learn in imgs_to_learn:
 						print "Learning",img_to_learn[1:],
+						if len(training_images) == 1:
+							t_dir = options.training_dir[0]
+						else:
+							t_dir = options.training_dir[round_num-1]
 						if not options.test:
-							res = GoogleGoggles.learn(os.path.join(options.validation_dir,img_to_learn[0]),object_name)
-							if res['status'] != 'SUCCESS':
-								print 'failed!'
-								continue
+							try:
+								res = GoogleGoggles.learn(os.path.join(t_dir,img_to_learn[0],object_name))
+							except Exception, e:
+								print 'Exception occured during call to learn:',e
+								res = {'status':'EXCEPTION','exception':e}
+						else:
+							res = {'status':'SUCCESS'}
+						
+						learn_responses[-1].append((t_dir,img_to_learn,res))
+						if res['status'] != 'SUCCESS':
+							print 'failed!'
+							continue
 						print 'done'
 					
 						images_not_learned.remove(img_to_learn)
@@ -256,19 +272,29 @@ def main(argv):
 						f.write("  %s: %d\n" % (key,val))
 			
 			print 'Testing images...'
+			match_responses.append([])
 			data_this_round = numpy.zeros((len(validation_images),1),dtype=int)
 			for idx,img in enumerate(validation_images):
 				#if rospy.is_shutdown(): break
 				
 				print 'testing %d/%d' % (idx+1,len(validation_images)) , img[1:],
 				if not options.test:
-					res = GoogleGoggles.match(os.path.join(options.validation_dir,img[0]))
+					try:
+						res = GoogleGoggles.match(os.path.join(options.validation_dir,img[0]))
+					except Exception, e:
+						print 'Exception occured during call to learn:',e
+						res = {'status':'EXCEPTION','exception':e,'image_label':''}
 					success = res['image_label'] == img[1]
 				else:
 					if data_table is not None and data_table[idx,-1]:
 						success = True
 					else:
 						success = bool(random.randint(0,1))
+					if success:
+						res = {'status':'SUCCESS','image_label':img[1]}
+					else:
+						res = {'status':'FAILURE','image_label':''}
+				match_responses[-1].append((options.validation_dir,img,res))
 				print 'done', success
 					
 				
@@ -345,6 +371,25 @@ def main(argv):
 	total_minutes = round(total_time/60)
 	total_seconds_into_minute = total_time - 60 * total_minutes
 	
+	if not options.validate_only:
+		pkld['training_images'] = training_images
+	pkld['validation_images'] = validation_images
+	pkld['field_names'] = field_names
+	pkld['field_vals'] = field_vals
+	pkld['objects'] = objects
+	if not options.validate_only:
+		pkld['images_learned'] = images_learned
+		pkld['images_not_learned'] = images_not_learned
+	pkld['num_rounds'] = num_rounds
+	pkld['data_table'] = data_table
+	
+	if not options.validate_only:
+		pkld['learn_responses'] = learn_responses
+	pkld['match_responses'] = match_responses
+	
+	pf = open(pickle_filename,'w')
+	pickle.dump(pkld,pf)
+	pf.close()
 	
 	print 'Complete'
 	f.write('Complete\n')
@@ -360,37 +405,16 @@ def main(argv):
 		f.write("Did not learn %d images\n" % len(images_not_learned))
 	
 	for i in xrange(num_rounds):
-		print '  Round #%d Recognized %d/%d' % (i+1,numpy.sum(data_table[:,i].flatten()),len(validation_images))
-		f.write('  Round #%d Recognized %d/%d\n' % (i+1,numpy.sum(data_table[:,i].flatten()),len(validation_images)))
+		if i >= data_table.shape[1]:
+			print '  Round #%d: Data doesn\'t exist' % (i+1)
+			f.write('  Round #%d: Data doesn\'t exist' % (i+1))
+		else:
+			print '  Round #%d Recognized %d/%d' % (i+1,numpy.sum(data_table[:,i].flatten()),len(validation_images))
+			f.write('  Round #%d Recognized %d/%d\n' % (i+1,numpy.sum(data_table[:,i].flatten()),len(validation_images)))
 	
 	f.close()
 	
-	#pkl.dump('images'); pkl.dump(images)
-	#pkl.dump('field_names'); pkl.dump(field_names)
-	#pkl.dump('field_vals'); pkl.dump(field_vals)
-	#pkl.dump('objects'); pkl.dump(objects)
-	#pkl.dump('images_learned'); pkl.dump(images_learned)
-	#pkl.dump('images_not_learned'); pkl.dump(images_not_learned)
-	#pkl.dump('num_rounds'); pkl.dump(num_rounds)
-	#pkl.dump('data_table'); pkl.dump(data_table)
 	
-	#pkld['images'] = images
-	if not options.validate_only:
-		pkld['training_images'] = training_images
-	pkld['validation_images'] = validation_images
-	pkld['field_names'] = field_names
-	pkld['field_vals'] = field_vals
-	pkld['objects'] = objects
-	if not options.validate_only:
-		pkld['images_learned'] = images_learned
-		pkld['images_not_learned'] = images_not_learned
-	pkld['num_rounds'] = num_rounds
-	pkld['data_table'] = data_table
-	
-	
-	pf = open(pickle_filename,'w')
-	pickle.dump(pkld,pf)
-	pf.close()
 	
 	print "Wrote results to %s" % filename
 	
