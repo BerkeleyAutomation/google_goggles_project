@@ -97,6 +97,7 @@ def main(argv):
 	
 	parser.add_option('--seed')
 	parser.add_option('--random',action='store_true',default=False)
+	parser.add_option('--num-samples',type='int',default=1)
 	
 	parser.add_option("--num-rounds",type='int',default=0)
 	parser.add_option("--one-shot",dest='train-all',action='store_true')
@@ -105,7 +106,6 @@ def main(argv):
 	parser.add_option('--train-all',action='store_true',default=False)
 	
 	parser.add_option('--dont-validate-training-images',action='store_true',default=False)
-	
 	
 	parser.add_option('--clear',action='store_true',default=False)
 	parser.add_option('--clear-first',action='store_true',default=False)
@@ -278,6 +278,8 @@ def main(argv):
 	learn_responses = []
 	match_responses = []
 	
+	learned_images_to_this_round = []
+	
 	try:
 		while images_not_learned or options.validate_only: #and not rospy.is_shutdown():
 			round_num += 1
@@ -302,8 +304,7 @@ def main(argv):
 					if options.train_all:
 						imgs_to_learn = object_images
 					else:
-						ind = random.randrange(len(object_images))
-						imgs_to_learn = object_images[ind:ind+1]
+						imgs_to_learn = random.sample(object_images,options.num_samples)
 					
 					for img_to_learn in imgs_to_learn:
 						print "Learning",img_to_learn[1:],
@@ -371,7 +372,11 @@ def main(argv):
 				#if rospy.is_shutdown(): break
 				
 				print 'testing %d/%d' % (idx+1,len(validation_images)) , img[1:],
-				if not options.test:
+				if options.dont_validate_training_images and \
+						[li for li in learned_images_to_this_round if os.path.basename(img[0]) == os.path.basename(li[0])]:
+					res = {'status':'SUCCESS','image_label':img[1],'skipped':True}
+					success = True
+				elif not options.test:
 					try:
 						res = GoogleGoggles.match(os.path.join(options.validation_dir,img[0]))
 					except Exception, e:
@@ -513,8 +518,6 @@ def main(argv):
 			f.write('  Round #%d Recognized %d/%d\n' % (i+1,numpy.sum(data_table[:,i].flatten()),len(validation_images)))
 	
 	f.close()
-	
-	
 	
 	print "Wrote results to %s" % filename
 	
