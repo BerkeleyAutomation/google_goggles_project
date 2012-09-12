@@ -104,6 +104,8 @@ def main(argv):
 	parser.add_option("--validation-only",action='store_true',dest='validate-only')
 	parser.add_option('--train-all',action='store_true',default=False)
 	
+	parser.add_option('--dont-validate-training-images',action='store_true',default=False)
+	
 	
 	parser.add_option('--clear',action='store_true',default=False)
 	parser.add_option('--clear-first',action='store_true',default=False)
@@ -205,6 +207,11 @@ def main(argv):
 	images_not_learned = []
 	images_not_learned[:] = [item for sublist in training_images for item in sublist]
 	num_training_images = len(images_not_learned)
+	
+	training_image_names = [os.path.basename(img[0]) for img in images_not_learned]
+	
+	if options.train_all and options.dont_validate_training_images:
+		validation_images = [img for img in validation_images if os.path.basename(img[0]) not in training_image_names]
 	
 	images_learned = []
 	
