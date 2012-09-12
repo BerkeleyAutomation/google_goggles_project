@@ -14,6 +14,7 @@ import rospy
 import rosbag
 
 import cv
+from google_goggles.msg import ObjectReferenceData
 from geometry_msgs.msg import *
 from sensor_msgs.msg import Image, PointCloud2
 from std_msgs.msg import Float32
@@ -122,7 +123,7 @@ class image_tester:
 			except os.error, e:
 				print e
 		
-		self.ref_cloud_pub = rospy.Publisher('/cloud_pcd',PointCloud2)
+		self.ref_cloud_pub = rospy.Publisher('/google_goggles/ref_data',PointCloud2)
 		
 		if options.crop_size is not None:
 			sz = options.crop_size.split('x')
@@ -227,12 +228,19 @@ class image_tester:
 							ref_pc_dir = roslib.packages.get_pkg_subdir('google_goggles','data/points/ref')
 							filename = ref_pc_dir + '/' + label + '.bag'
 							
+							ref_data = ObjectReferenceData()
+							
 							bag = rosbag.Bag(filename)
 							for topic,msg,t in bag.read_messages(topics=['/cloud_pcd']):
-								msg.header.stamp = rospy.Time.now()
-								print 'publishing...'
-								self.ref_cloud_pub.publish(msg)
-								break
+								if topic == '/cloud_pcd':
+									ref_data.object = msg
+								elif topic == '/grasps':
+									ref_data.grasps = msg
+								#msg.header.stamp = rospy.Time.now()
+								#print 'publishing...'
+								#self.ref_cloud_pub.publish(msg)
+								#break
+							self.ref_cloud_pub.publish(ref_data)
 						else:
 							print 'failure :('
 							results_string = format_results('TEST','FAILURE','~','~',stamp,save_file_name)

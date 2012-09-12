@@ -10,5 +10,7 @@ data*/
 src/backup_*/
 scripts/backup_*/
 Makefile
+msg_gen
+srv_gen
 
 .*project
