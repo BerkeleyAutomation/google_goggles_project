@@ -90,7 +90,7 @@ def main(argv):
 	parser = OptionParser('%prog [OPTIONS]')
 	parser.add_option('--test',action='store_true',default=False)
 	
-	parser.add_option('-d','--dir',dest='validation-dir',default='.')
+	parser.add_option('-d','--dir',dest='validation_dir')
 	parser.add_option('-v','--validation-dir',default='.')
 	parser.add_option('-t','--training-dir')
 	parser.add_option('--set-training-round-dirs',action='store_true',default=False)
@@ -102,7 +102,7 @@ def main(argv):
 	parser.add_option("--num-rounds",type='int',default=0)
 	parser.add_option("--one-shot",dest='train-all',action='store_true')
 	parser.add_option("--validate-only",action='store_true',default=False)
-	parser.add_option("--validation-only",action='store_true',dest='validate-only')
+	parser.add_option("--validation-only",action='store_true',dest='validate_only')
 	parser.add_option('--train-all',action='store_true',default=False)
 	
 	parser.add_option('--dont-validate-training-images',action='store_true',default=False)
@@ -139,6 +139,15 @@ def main(argv):
 		print 'TESTING!'
 	
 	objects = set()
+	
+	if len(options.training_dir) == 1:
+		print "Training dir: %s" % options.training_dir[0]
+	else:
+		print "Training dirs:"
+		for d in options.training_dir:
+			print "  %s" % d
+	
+	print "Validation dir: %s" % options.validation_dir
 	
 	image_dirs = [options.validation_dir] + options.training_dir
 	images = []
@@ -506,8 +515,8 @@ def main(argv):
 			print "  Round #%d Learned %d" % (i+1,len(images_learned[i]))
 			f.write("  Round #%d Learned %d\n" % (i+1,len(images_learned[i])))
 		
-		print "Did not learn %d images" % len(images_not_learned)
-		f.write("Did not learn %d images\n" % len(images_not_learned))
+		print "Training images left unlearned: %d" % len(images_not_learned)
+		f.write("Training images left unlearned: %d images\n" % len(images_not_learned))
 	
 	for i in xrange(num_rounds):
 		if i >= data_table.shape[1]:

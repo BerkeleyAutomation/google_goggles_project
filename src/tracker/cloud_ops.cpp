@@ -70,6 +70,13 @@ void downsampleCloudInPlace(ColorCloudPtr in, float sz) {
 	vg.filter(*in);
 }
 
+void downsampleCloudInPlace(CloudPtr in, float sz) {
+	pcl::VoxelGrid<Point> vg;
+	vg.setInputCloud(in);
+	vg.setLeafSize(sz,sz,sz);
+	vg.filter(*in);
+}
+
 ColorCloudPtr removeOutliers(const ColorCloudPtr in, float thresh, int k) {
 	ColorCloudPtr out(new ColorCloud());
 	pcl::StatisticalOutlierRemoval<ColorPoint> sor;

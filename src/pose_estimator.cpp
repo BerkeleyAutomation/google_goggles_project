@@ -27,7 +27,11 @@
 #include "tracker/tracker_ros.h"
 #include "tracker/table_config.h"
 
-#include "google_goggles/ObjectReferenceData.h"
+#include "tracker/cloud_ops.h"
+
+#include <google_goggles_msgs/ObjectReferenceData.h>
+#include <google_goggles_msgs/ObjectData.h>
+#include <google_goggles_srvs/AlignObject.h>
 
 #include <graspit_srvs/TestGrasps.h>
 
@@ -47,7 +51,10 @@ ros::Publisher aligned_cloud_pub;
 ros::Publisher pose_pub;
 ros::Publisher grasp_pub;
 
+ros::Publisher object_data_pub;
+
 static ros::ServiceClient* testGraspsService = 0;
+static ros::ServiceServer* alignObjectService = 0;
 
 std::vector<Affine3f> getGraspPoses() {
 	std::vector<Affine3f> poses;
@@ -62,17 +69,20 @@ std::vector<Affine3f> getGraspPoses() {
 	return poses;
 }
 
-void callback(const google_goggles::ObjectReferenceData& msg) {
-	if (!tracker->initialized) { return; }
+bool align(const sensor_msgs::PointCloud2& pc,geometry_msgs::PoseStamped& pose_out) {
+	if (!tracker->initialized) { return false; }
 	ROS_INFO("*****************GOT REF CLOUD*********");
-	ColorCloudPtr ref_cloud(new ColorCloud());
-	pcl::fromROSMsg(msg.object.cloud, *ref_cloud);
+	CloudPtr ref_cloud(new Cloud());
+	pcl::fromROSMsg(pc, *ref_cloud);
 	
-	ColorCloudPtr latest_cloud = tracker->latest_cluster;
+	downsampleCloudInPlace(ref_cloud,TableConfig::VOXEL_SIZE);
 	
-	ColorCloudPtr aligned_cloud(new ColorCloud());
+	CloudPtr latest_cloud(new Cloud());
+	pcl::copyPointCloud(*(tracker->latest_cluster),*latest_cloud );
 	
-	ColorPoint min, max;
+	CloudPtr aligned_cloud(new Cloud());
+	
+	Point min, max;
 	pcl::getMinMax3D(*latest_cloud,min,max);
 	
 	Affine3f best_tf;
@@ -90,10 +100,10 @@ void callback(const google_goggles::ObjectReferenceData& msg) {
 			std::cout << "testing " << i+1 << "/" << num_angles << "..." << std::endl;
 			Quaternionf rot(AngleAxisf(angle,Vector3f(0,0,1)));
 			
-			ColorCloudPtr ref_cloud_rot(new ColorCloud());
+			CloudPtr ref_cloud_rot(new Cloud());
 			pcl::transformPointCloud(*ref_cloud,*ref_cloud_rot,Vector3f(0,0,0),rot);
 			
-			ColorPoint ref_min, ref_max;
+			Point ref_min, ref_max;
 			pcl::getMinMax3D(*ref_cloud_rot,ref_min,ref_max);
 			
 			Translation3f shift(
@@ -107,7 +117,7 @@ void callback(const google_goggles::ObjectReferenceData& msg) {
 			
 			if (i+1 == pub_angle_num) {
 				ROS_INFO("Publishing ref cloud");
-				ColorCloudPtr ref_cloud_tranformed(new ColorCloud());
+				CloudPtr ref_cloud_tranformed(new Cloud());
 				pcl::transformPointCloud(*ref_cloud,*ref_cloud_tranformed,guess);
 				sensor_msgs::PointCloud2 ref_cloud_msg;
 				pcl::toROSMsg(*ref_cloud_tranformed,ref_cloud_msg);
@@ -117,7 +127,7 @@ void callback(const google_goggles::ObjectReferenceData& msg) {
 			}
 			
 			//icp
-			pcl::IterativeClosestPoint<ColorPoint, ColorPoint> icp;
+			pcl::IterativeClosestPoint<Point, Point> icp;
 			icp.setInputCloud(ref_cloud);
 			icp.setInputTarget(latest_cloud);
 			
@@ -142,8 +152,8 @@ void callback(const google_goggles::ObjectReferenceData& msg) {
 		ROS_INFO_STREAM("Best angle: " << 180 * best_angle/M_PI << " with score: " << best_score);
 	
 		if (best_angle == -1) {
-			ROS_INFO("ICP failed!");
-			return;
+			ROS_ERROR("ICP failed!");
+			return false;
 		}
 	}
 	
@@ -157,6 +167,7 @@ void callback(const google_goggles::ObjectReferenceData& msg) {
 	ROS_INFO("Publishing aligned cloud");
 	aligned_cloud_pub.publish(aligned_cloud_msg);
 	
+	/*
 	graspit_srvs::TestGrasps::Request treq;
 	treq.object = msg.object;
 	treq.object.cloud = aligned_cloud_msg;
@@ -190,6 +201,7 @@ void callback(const google_goggles::ObjectReferenceData& msg) {
 			max_ind = i;
 		}
 	}
+	*/
 	
 	Quaternionf reference_pose(AngleAxisf(M_PI_2,Vector3f(0,0,1)));
 	
@@ -228,6 +240,7 @@ void callback(const google_goggles::ObjectReferenceData& msg) {
 
 	//publish pose
 	pose_pub.publish(pose);
+	pose_out = pose;
 	
 	geometry_msgs::PoseStamped grasp_pose;
 	grasp_pose.header.stamp = ros::Time::now();
@@ -246,7 +259,27 @@ void callback(const google_goggles::ObjectReferenceData& msg) {
 	tf::quaternionTFToMsg(grasp_pose_tf.getRotation(),grasp_pose.pose.orientation);
 
 	//publish pose
-	grasp_pub.publish(grasp_pose);
+	//grasp_pub.publish(grasp_pose);
+	
+	return true;
+}
+
+bool serviceCallback(google_goggles_srvs::AlignObject::Request& request, google_goggles_srvs::AlignObject::Response& response) {
+	ROS_INFO("AlignObject service called!");
+	geometry_msgs::PoseStamped pose;
+	pose.header.stamp = ros::Time(0);
+	align(request.object.cloud,pose);
+	if (pose.header.stamp == ros::Time(0)) {
+		ROS_ERROR("Align call failed!");
+		return false;
+	}
+	response.pose = pose;
+	return true;
+}
+
+void callback(const google_goggles_msgs::ObjectReferenceData& msg) {
+	geometry_msgs::PoseStamped pose;
+	align(msg.object.cloud,pose);
 }
 
 int main(int argc, char* argv[]) {
@@ -257,18 +290,26 @@ int main(int argc, char* argv[]) {
 
 	ros::NodeHandle nh;
 	tracker = new TabletopTrackerROS(nh);
-	ROS_INFO("Tracker ready");
+	ROS_INFO("Tracker created");
+	
+	listener = new tf::TransformListener();
 	
 	//ref_cloud_sub = nh.subscribe("/google_goggles/ref_cloud",1,&callback);
-	ref_cloud_sub = nh.subscribe("/google_goggles/ref_data",1,&callback);
+	ref_cloud_sub = nh.subscribe("object_ref_data",1,&callback);
 	
-	ref_cloud_pub     = nh.advertise<sensor_msgs::PointCloud2>("google_goggles/ref_object",1);
-	aligned_cloud_pub = nh.advertise<sensor_msgs::PointCloud2>("google_goggles/aligned_object",1);
+	ref_cloud_pub     = nh.advertise<sensor_msgs::PointCloud2>("ref_object",1,true);
+	aligned_cloud_pub = nh.advertise<sensor_msgs::PointCloud2>("aligned_object",1,true);
 	
-	pose_pub = nh.advertise<geometry_msgs::PoseStamped>("google_goggles/object_pose",1);
-	grasp_pub = nh.advertise<geometry_msgs::PoseStamped>("google_goggles/grasp_pose",1);
+	pose_pub = nh.advertise<geometry_msgs::PoseStamped>("object_pose",1,true);
+	grasp_pub = nh.advertise<geometry_msgs::PoseStamped>("grasp_pose",1,true);
 	
-	testGraspsService = new ros::ServiceClient(nh.serviceClient<graspit_srvs::TestGrasps>("graspit/test_grasps"));
+	object_data_pub = nh.advertise<google_goggles_msgs::ObjectData>("aligned_object_data",1,true);
+	
+	testGraspsService = new ros::ServiceClient(nh.serviceClient<graspit_srvs::TestGrasps>("test_grasps"));
+	
+	alignObjectService = new ros::ServiceServer(nh.advertiseService("align_object", serviceCallback));
+	
+	ROS_INFO("Pose estimator ready");
 
 	ros::Duration(1).sleep();
 

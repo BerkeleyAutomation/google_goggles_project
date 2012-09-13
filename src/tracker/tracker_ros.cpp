@@ -23,12 +23,12 @@ Eigen::Affine3f toEigenTransform(const btTransform& transform) {
 }
 
 TabletopTrackerROS::TabletopTrackerROS(ros::NodeHandle nh,TabletopTracker::Mode mode) : TabletopTracker(mode),hasPendingMessage(false) {
-	points_pub = nh.advertise<sensor_msgs::PointCloud2>("google_goggles/points",100);
-	cloud_pub = nh.advertise<sensor_msgs::PointCloud2>("google_goggles/cloud",100);
-	cluster_pub = nh.advertise<sensor_msgs::PointCloud2>("google_goggles/clusters",100);
+	points_pub = nh.advertise<sensor_msgs::PointCloud2>("points",100);
+	cloud_pub = nh.advertise<sensor_msgs::PointCloud2>("cloud",100);
+	cluster_pub = nh.advertise<sensor_msgs::PointCloud2>("clusters",100);
 	//cyl_pub = nh.advertise<misc_msgs::TrackedCylinders>("spinning_tabletop/cylinders",100);
 	//cloud_sub = nh.subscribe("input_cloud",1,&TabletopTrackerROS::callback, this);
-	table_height_pub = nh.advertise<std_msgs::Float32>("google_goggles/table_height",1,true);
+	table_height_pub = nh.advertise<std_msgs::Float32>("table_height",1,true);
 	cloud_sub = nh.subscribe("/camera/depth_registered/points",1,&TabletopTrackerROS::callback, this);
 	
 	map_frame = "/base_footprint";

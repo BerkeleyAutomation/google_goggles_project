@@ -10,6 +10,9 @@
   <url>http://github.com/BerkeleyAutomation/google-goggles</url>
   <depend package="rospy"/>
   <depend package="roscpp"/>
+  <depend package="google_goggles_msgs"/>
+  <depend package="google_goggles_srvs"/>
+  <depend package="rosbag"/>
   <depend package="sensor_msgs"/>
   <depend package="pcl_ros"/>
   <depend package="pcl"/>
@@ -32,6 +35,8 @@
   <!--depend package="pr2_simple_head_motions"/-->
   
   <depend package="graspit_srvs"/>
+  
+  <depend package="image_transport"/>
 
 </package>
 

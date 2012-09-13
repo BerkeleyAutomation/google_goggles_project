@@ -17,9 +17,9 @@ set(EXECUTABLE_OUTPUT_PATH ${PROJECT_SOURCE_DIR}/bin)
 set(LIBRARY_OUTPUT_PATH ${PROJECT_SOURCE_DIR}/lib)
 
 #uncomment if you have defined messages
-rosbuild_genmsg()
+#rosbuild_genmsg()
 #uncomment if you have defined services
-rosbuild_gensrv()
+#rosbuild_gensrv()
 
 find_package(OpenCV REQUIRED)
 
@@ -70,5 +70,7 @@ target_link_libraries(google_goggles_point_cloud ${OpenCV_LIBS} boost_program_op
 rosbuild_add_executable(pose_estimator src/pose_estimator.cpp)
 target_link_libraries(pose_estimator google_goggles_point_cloud)
 
-rosbuild_add_executable(point_cloud_to_mesh_repub src/point_cloud_to_mesh_repub.cpp)
-target_link_libraries(point_cloud_to_mesh_repub google_goggles_point_cloud)
+rosbuild_add_executable(point_cloud_to_mesh src/point_cloud_to_mesh.cpp)
+target_link_libraries(point_cloud_to_mesh google_goggles_point_cloud)
+
+#rosbuild_add_executable(image_file_publisher src/image_file_publisher.cpp)

@@ -13,6 +13,7 @@
 std::vector< std::vector<int> > findClusters(ColorCloudPtr cloud, float tol=.02, float minSize=100);
 ColorCloudPtr downsampleCloud(const ColorCloudPtr in, float sz);
 void downsampleCloudInPlace(ColorCloudPtr in, float sz);
+void downsampleCloudInPlace(CloudPtr in, float sz);
 ColorCloudPtr removeOutliers(const ColorCloudPtr in, float thresh=1, int k=15);
 ColorCloudPtr findConcaveHull(ColorCloudPtr in, std::vector<pcl::Vertices>& polygons);
 ColorCloudPtr findConvexHull(ColorCloudPtr in, std::vector<pcl::Vertices>& polygons);

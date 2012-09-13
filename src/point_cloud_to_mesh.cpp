@@ -1,9 +1,16 @@
 #include <ros/ros.h>
+#include <ros/callback_queue.h>
+#include <rosbag/bag.h>
+
 #include <iostream>
-#include <tf/transform_listener.h>
-#include <sensor_msgs/PointCloud2.h>
-#include <pcl/PolygonMesh.h>
-#include <geometry_msgs/PoseStamped.h>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <math.h>
+#include <stdio.h>
+#include <time.h>
+
+#include <boost/foreach.hpp>
 
 #include <pcl/common/common_headers.h>
 #include <pcl/common/common.h>
@@ -17,15 +24,16 @@
 #include <pcl/surface/gp3.h>
 #include <pcl/visualization/pcl_visualizer.h>
 
-#include <boost/foreach.hpp>
-#include <sstream>
-#include <vector>
-#include <math.h>
+#include <sensor_msgs/PointCloud2.h>
+#include <pcl/PolygonMesh.h>
+#include <geometry_msgs/PoseStamped.h>
+#include <geometry_msgs/PoseArray.h>
 
 #include <graspit_srvs/GenerateGrasps.h>
 #include <graspit_srvs/TestGrasps.h>
 
-#include "google_goggles/CreateMesh.h"
+#include <google_goggles_srvs/CreateMesh.h>
+#include <google_goggles_msgs/ObjectReferenceData.h>
 
 using namespace std;
 using namespace Eigen;
@@ -33,6 +41,11 @@ using namespace Eigen;
 static pcl::visualization::PCLVisualizer* viewer = 0;
 static ros::ServiceClient* generateGraspsService = 0;
 static ros::ServiceClient* testGraspsService = 0;
+
+static ros::Publisher* cloud_pub = 0;
+static ros::Publisher* grasps_pub = 0;
+
+static rosbag::Bag* bag = 0;
 
 bool point_cloud_to_mesh(pcl::PointCloud<pcl::PointXYZ>::Ptr cloud,pcl::PolygonMesh& mesh) {
 	pcl::PointCloud<pcl::PointXYZ>::Ptr cloud2(new pcl::PointCloud<pcl::PointXYZ>());
@@ -177,7 +190,7 @@ bool point_cloud_to_mesh(pcl::PointCloud<pcl::PointXYZ>::Ptr cloud,pcl::PolygonM
 			avg_diff = sqrt(pow(p.x - x,2) + pow(p.y - y,2) + pow(p.z - z,2));
 		}
 		avg_diff = avg_diff / cloud->points.size();
-		std::cout << "avg diff: " << avg_diff << std::endl;
+		//std::cout << "avg diff: " << avg_diff << std::endl;
 		
 		for (size_t i=0;i<t_new.size();i++) {
 			if ((int)polygons[i/3].vertices[i%3] != t_new[i]) {
@@ -205,7 +218,7 @@ bool point_cloud_to_mesh(pcl::PointCloud<pcl::PointXYZ>::Ptr cloud,pcl::PolygonM
 }
 
 
-bool service_callback(google_goggles::CreateMesh::Request& request, google_goggles::CreateMesh::Response& response) {
+bool service_callback(google_goggles_srvs::CreateMesh::Request& request, google_goggles_srvs::CreateMesh::Response& response) {
 	pcl::PointCloud<pcl::PointXYZ>::Ptr cloud(new pcl::PointCloud<pcl::PointXYZ>());
 	pcl::fromROSMsg(request.point_cloud, *cloud);
 	
@@ -221,7 +234,15 @@ void sub_callback(const sensor_msgs::PointCloud2& msg) {
 	pcl::PolygonMesh mesh;
 	point_cloud_to_mesh(cloud,mesh);
 	
-	if (generateGraspsService) {
+	if (cloud_pub) {
+		ROS_INFO("Publishing cloud");
+		cloud_pub->publish(mesh.cloud);
+	}
+	
+	if (!generateGraspsService && bag) {
+		ROS_INFO("Writing object mesh to bag file");
+		bag->write("object", msg.header.stamp, mesh);
+	} else if (generateGraspsService) {
 		graspit_srvs::GenerateGrasps::Request greq;
 		greq.object = mesh;
 		greq.num_grasps = 7;
@@ -233,21 +254,60 @@ void sub_callback(const sensor_msgs::PointCloud2& msg) {
 		
 		std::cout << " Num grasps " << gres.grasps.size() << std::endl;
 		
+		geometry_msgs::PoseArray pose_array;
+		pose_array.header = msg.header;
+		for (size_t i=0;i<gres.grasps.size();i++) {
+			pose_array.poses.push_back(gres.grasps[i].grasp_pose);
+		}
+		
+		if (grasps_pub) {
+			ROS_INFO("Publishing grasps");
+			grasps_pub->publish(pose_array);
+		}
+		
+		if (bag) {
+			ROS_INFO("Writing object mesh and grasps to bag file");
+			google_goggles_msgs::ObjectReferenceData data;
+			data.object = mesh;
+			data.grasps = gres.grasps;
+			bag->write("object_ref_data",msg.header.stamp,data);
+			bag->write("object_grasps",msg.header.stamp,pose_array);
+			std::cout << data.object.cloud.header << std::endl;
+		}
+		
 		graspit_srvs::TestGrasps::Request treq;
 		treq.object = mesh;
 		treq.grasps = gres.grasps;
 		
 		graspit_srvs::TestGrasps::Response tres;
 		
-		ros::Duration(1).sleep();
+		if (testGraspsService) {
 		
-		ROS_INFO("Testing grasps...");
-		testGraspsService->call(treq,tres);
-		
-		ROS_INFO("Got result!");
-		for (size_t i=0;i<tres.qualities.size();i++) {
-			std::cout << "Grasp #" << i << " quality: " << tres.qualities[i] << std::endl;
+			ros::Duration(1).sleep();
+			
+			ROS_INFO("Testing grasps...");
+			testGraspsService->call(treq,tres);
+			
+			ROS_INFO("Got result!");
+			std::cout << " Num grasps " << tres.qualities.size() << std::endl;
+			for (size_t i=0;i<tres.qualities.size();i++) {
+				std::cout << "Grasp #" << i << " quality: " << tres.qualities[i] << std::endl;
+			}
+			
+			if (bag) {
+				ROS_INFO("Writing object mesh and tested grasps to bag file");
+				google_goggles_msgs::ObjectReferenceData data;
+				data.object = mesh;
+				data.grasps = tres.grasps;
+				bag->write("object_grasps_tested",msg.header.stamp,data);
+				//std::cout << data.grasps[0] << std::endl;
+			}
 		}
+	}
+	
+	if (bag) {
+		ROS_INFO("Shutting down");
+		ros::shutdown();
 	}
 }
 
@@ -257,21 +317,44 @@ int main(int argc, char* argv[]) {
 	
 	bool use_viewer = true;
 	bool use_service = true;
-	bool test = false;
+	bool generate_grasps = false;
+	bool test_grasps = false;
+	bool save = false;
+	std::string save_prefix = "object_data";
 	
+	
+	bool publish_cloud = false;
+	bool publish_grasps = false;
 	
 	for (int arg_ind = 0;arg_ind < argc; arg_ind++) {
 		std::string arg(argv[arg_ind]);
-		if (arg == "--no-viz") {
-			use_viewer = false;
-		} else if (arg == "--no-service") {
-			use_service = false;
-		} else if (arg == "--test") {
-			test = true;
+		
+		use_viewer &= (arg != "--no-viz");
+		use_service &= (arg != "--no-service");
+		
+		generate_grasps |= (arg == "--generate-grasps");
+		generate_grasps |= (arg == "-g");
+		
+		test_grasps |= (arg == "--test-grasps");
+		
+		save |= (arg == "--save");
+		if (arg == "--save-as") {
+			save = true;
+			arg_ind++;
+			save_prefix = argv[arg_ind];
 		}
+		
+		publish_cloud |= (arg == "--publish-cloud");
+		publish_grasps |= (arg == "--publish-grasps");
+		
+		publish_cloud |= (arg == "--publish");
+		publish_grasps |= (arg == "--publish");
 	}
+	
+	ros::CallbackQueue* cb_queue = new ros::CallbackQueue();
 
 	ros::NodeHandle nh("");
+	nh.setCallbackQueue(cb_queue);
 	
 	if (use_viewer) {
 		viewer = new pcl::visualization::PCLVisualizer("3D Viewer");
@@ -282,19 +365,55 @@ int main(int argc, char* argv[]) {
 		service = new ros::ServiceServer(nh.advertiseService("create_mesh", service_callback));
 	}
 	
-	if (test) {
-		generateGraspsService = new ros::ServiceClient(nh.serviceClient<graspit_srvs::GenerateGrasps>("graspit/generate_grasps"));
-		testGraspsService = new ros::ServiceClient(nh.serviceClient<graspit_srvs::TestGrasps>("graspit/test_grasps"));
-	}	
+	if (generate_grasps || test_grasps) {
+		generateGraspsService = new ros::ServiceClient(nh.serviceClient<graspit_srvs::GenerateGrasps>("generate_grasps"));
+		if (test_grasps) {
+			testGraspsService = new ros::ServiceClient(nh.serviceClient<graspit_srvs::TestGrasps>("test_grasps"));
+		}
+	}
+	
+	std::string filename;
+	if (save) {
+		time_t rawtime;
+		struct tm* timeinfo;
+		char buffer[80];
+
+		time(&rawtime);
+		timeinfo = localtime(&rawtime);
+
+		strftime(buffer,80,"%Y-%m-%d-T%H-%M-%S",timeinfo);
+		std::string time_string(buffer);
+		filename = save_prefix + "_" + time_string + ".bag";
+		
+		bag = new rosbag::Bag();
+		bag->open(filename,rosbag::bagmode::Write);
+		ROS_INFO("Writing object data to %s",filename.c_str());
+	}
+	
+	if (publish_cloud) {
+		cloud_pub = new ros::Publisher(nh.advertise<sensor_msgs::PointCloud2>("object_mesh",1,true));
+	}
+	
+	if (publish_grasps) {
+		grasps_pub = new ros::Publisher(nh.advertise<geometry_msgs::PoseArray>("object_grasps",1,true));
+	}
 	
 	ros::Subscriber sub = nh.subscribe("cloud_pcd", 1, &sub_callback);
 	
 	ROS_INFO("Ready");
 	
+	ros::AsyncSpinner spinner(1,cb_queue);
+	spinner.start();
+	
 	ros::Rate rate(5);
 	while (!viewer->wasStopped() && ros::ok()) {
-		ros::spinOnce();
+		//ros::spinOnce();
 		viewer->spinOnce(100);
 		rate.sleep();
+	}
+	
+	if (bag) {
+		ROS_INFO_STREAM("Closing bag " << filename);
+		bag->close();
 	}
 }
