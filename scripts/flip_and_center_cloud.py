@@ -48,7 +48,7 @@ for fname in files:
 	headerLines = []
 	lines = []
 	
-	M = empty((10000,4));
+	M = empty((50000,4));
 
 	while True:
 		l = f.readline();

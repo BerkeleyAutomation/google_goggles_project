@@ -81,9 +81,9 @@ class ImageTester:
 		if self.crop_size is not None:
 			rospy.loginfo("Crop is {0} with offset {1}".format(self.crop_size,self.crop_offset))
 		
+		self.image_label_pub = rospy.Publisher(image_label_topic,String,latch=True)
 		self.image_sub_topic = image_topic
 		self.image_sub = rospy.Subscriber(self.image_sub_topic,Image,self.callback)
-		self.image_label_pub = rospy.Publisher(image_label_topic,String,latch=True)
 
 	def callback(self,data):
 		if self.options.max and self.total_tests >= self.options.max:

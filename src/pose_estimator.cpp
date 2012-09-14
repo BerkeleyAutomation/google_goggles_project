@@ -1,6 +1,8 @@
 #include <ros/ros.h>
 #include <iostream>
 #include <sstream>
+#include <stdlib.h>
+#include <math.h>
 
 #include <pcl/common/common_headers.h>
 #include <pcl/common/common.h>
@@ -32,6 +34,7 @@
 #include <google_goggles_msgs/ObjectReferenceData.h>
 #include <google_goggles_msgs/ObjectData.h>
 #include <google_goggles_srvs/AlignObject.h>
+#include <google_goggles_srvs/AlignCloud.h>
 
 #include <graspit_srvs/TestGrasps.h>
 
@@ -55,6 +58,7 @@ ros::Publisher object_data_pub;
 
 static ros::ServiceClient* testGraspsService = 0;
 static ros::ServiceServer* alignObjectService = 0;
+static ros::ServiceServer* alignCloudService = 0;
 
 std::vector<Affine3f> getGraspPoses() {
 	std::vector<Affine3f> poses;
@@ -89,16 +93,27 @@ bool align(const sensor_msgs::PointCloud2& pc,geometry_msgs::PoseStamped& pose_o
 	
 	{
 		float best_score = 1000000;
-		float best_angle = -1;
+		bool got_best = false;
+		float best_angle;
+		Vector3f best_axis;
+		Quaternionf best_rotation;
 		
-		int num_angles = 8;
 		
-		int pub_angle_num = 1;
+		int num_transforms = 1000;
 		
-		for (int i=0;i<num_angles;i++) {
-			float angle = i * (2. * M_PI / num_angles);
-			std::cout << "testing " << i+1 << "/" << num_angles << "..." << std::endl;
-			Quaternionf rot(AngleAxisf(angle,Vector3f(0,0,1)));
+		int pub_tf_num = -1;
+		
+		float angle;
+		Vector3f axis;
+		for (int i=1;i<=num_transforms;i++) {
+			std::cout << "testing " << i << "/" << num_transforms << "..." << std::endl;
+			angle = rand() * 2.0 * M_PI / RAND_MAX;
+			axis.setRandom();
+			Quaternionf rot(AngleAxisf(angle,axis.normalized()));
+			
+			//float angle = i * (2. * M_PI / num_angles);
+			//std::cout << "testing " << i+1 << "/" << num_angles << "..." << std::endl;
+			//Quaternionf rot(AngleAxisf(angle,Vector3f(0,0,1)));
 			
 			CloudPtr ref_cloud_rot(new Cloud());
 			pcl::transformPointCloud(*ref_cloud,*ref_cloud_rot,Vector3f(0,0,0),rot);
@@ -113,9 +128,9 @@ bool align(const sensor_msgs::PointCloud2& pc,geometry_msgs::PoseStamped& pose_o
 			
 			Affine3f guess = shift * rot;
 			
-			std::cout << "angle: " << 180 * angle/M_PI << " shift: (" << shift.x() << ", " << shift.y() << ", " << shift.z() << ")" << std::endl;
+			//std::cout << "angle: " << 180 * angle/M_PI << " shift: (" << shift.x() << ", " << shift.y() << ", " << shift.z() << ")" << std::endl;
 			
-			if (i+1 == pub_angle_num) {
+			if (i == pub_tf_num) {
 				ROS_INFO("Publishing ref cloud");
 				CloudPtr ref_cloud_tranformed(new Cloud());
 				pcl::transformPointCloud(*ref_cloud,*ref_cloud_tranformed,guess);
@@ -133,28 +148,31 @@ bool align(const sensor_msgs::PointCloud2& pc,geometry_msgs::PoseStamped& pose_o
 			
 			icp.setMaxCorrespondenceDistance(0.01);
 			
-			std::cout << "aligning..." << std::endl;
+			//std::cout << "aligning..." << std::endl;
 			icp.align(*aligned_cloud,guess.matrix());
 			
 			double fitness = icp.getFitnessScore();
-			std::cout << "has converged:" << icp.hasConverged() << " score: " << fitness << std::endl;
+			//std::cout << "has converged:" << icp.hasConverged() << " score: " << fitness << std::endl;
 			
 			Affine3f tf;
 			tf.matrix() = icp.getFinalTransformation();
 			
 			if (icp.hasConverged() && fitness < best_score) {
+				got_best = true;
 				best_score = fitness;
 				best_angle = angle;
+				best_axis = axis;
+				best_rotation = rot;
 				best_tf = tf;
 			}
 		}
 		
-		ROS_INFO_STREAM("Best angle: " << 180 * best_angle/M_PI << " with score: " << best_score);
-	
-		if (best_angle == -1) {
+		if (!got_best) {
 			ROS_ERROR("ICP failed!");
 			return false;
 		}
+		
+		ROS_INFO_STREAM("Best: axis (" << best_axis.x() << "," << best_axis.y() << "," << best_axis.z() << ")" << " angle: " << 180 * best_angle/M_PI << " with score: " << best_score);
 	}
 	
 	pcl::transformPointCloud(*ref_cloud,*aligned_cloud,best_tf);
@@ -167,63 +185,7 @@ bool align(const sensor_msgs::PointCloud2& pc,geometry_msgs::PoseStamped& pose_o
 	ROS_INFO("Publishing aligned cloud");
 	aligned_cloud_pub.publish(aligned_cloud_msg);
 	
-	/*
-	graspit_srvs::TestGrasps::Request treq;
-	treq.object = msg.object;
-	treq.object.cloud = aligned_cloud_msg;
-	treq.grasps = msg.grasps;
-	
-	//apply transformation to grasps
-	for (size_t i=0;i<msg.grasps.size();i++) {
-		Quaternionf rot(msg.grasps[i].grasp_pose.orientation.x,msg.grasps[i].grasp_pose.orientation.y,msg.grasps[i].grasp_pose.orientation.z,msg.grasps[i].grasp_pose.orientation.w);
-		Translation3f shift(msg.grasps[i].grasp_pose.position.x,msg.grasps[i].grasp_pose.position.y,msg.grasps[i].grasp_pose.position.z);
-		Affine3f tf = best_tf * shift * rot;
-		Affine3d tfd;
-		tfd.matrix() = tf.matrix().cast<double>();
-		tf::Transform ros_tf;
-		tf::TransformEigenToTF(tfd,ros_tf);
-		tf::pointTFToMsg(ros_tf.getOrigin(),treq.grasps[i].grasp_pose.position);
-		tf::quaternionTFToMsg(ros_tf.getRotation(),treq.grasps[i].grasp_pose.orientation);
-	}
-	
-	graspit_srvs::TestGrasps::Response tres;
-	
-	ROS_INFO("Testing grasps...");
-	testGraspsService->call(treq,tres);
-	
-	ROS_INFO("Got result!");
-	double max_quality = -1;
-	size_t max_ind = 0;
-	for (size_t i=0;i<tres.qualities.size();i++) {
-		std::cout << "Grasp #" << i << " quality: " << tres.qualities[i] << std::endl;
-		if (tres.qualities[i] > max_quality) {
-			max_quality = tres.qualities[i];
-			max_ind = i;
-		}
-	}
-	*/
-	
-	Quaternionf reference_pose(AngleAxisf(M_PI_2,Vector3f(0,0,1)));
-	
-	std::vector<Affine3f> grasp_poses = getGraspPoses();
-	size_t min_ind = 0;
-	float min_angle = 100000;
-	for (size_t i=0;i<grasp_poses.size();i++) {
-		Affine3f pose = best_tf * grasp_poses[i];
-		Quaternionf rot(pose.rotation());
-		if (rot.angularDistance(reference_pose) < min_angle) {
-			min_angle = rot.angularDistance(reference_pose);
-			min_ind = i;
-		}
-	}
-	
-	std::cout << "Best grasp is #" << min_ind << " with angle " << min_angle << std::endl;
-	
-	Affine3f grasp_tf = best_tf * grasp_poses[min_ind];
-	
 	/**************** Publishing **********************/
-	
-	
 
 	Affine3d tfd;
 	tfd.matrix() = best_tf.matrix().cast<double>();
@@ -242,33 +204,27 @@ bool align(const sensor_msgs::PointCloud2& pc,geometry_msgs::PoseStamped& pose_o
 	pose_pub.publish(pose);
 	pose_out = pose;
 	
-	geometry_msgs::PoseStamped grasp_pose;
-	grasp_pose.header.stamp = ros::Time::now();
-	grasp_pose.header.frame_id = tracker->map_frame;
-	
-	Affine3d grasp_tfd;
-	grasp_tfd.matrix() = grasp_tf.matrix().cast<double>();
-	
-	tf::Transform grasp_pose_tf = tf::Transform::getIdentity();
-	/*tf::Quaternion rot;
-	rot.setEuler(best_angle,0.,0.);
-	grasp_pose_tf.setRotation(rot);*/
-	tf::TransformEigenToTF(grasp_tfd,grasp_pose_tf);
-	
-	tf::pointTFToMsg(grasp_pose_tf.getOrigin(),grasp_pose.pose.position);
-	tf::quaternionTFToMsg(grasp_pose_tf.getRotation(),grasp_pose.pose.orientation);
-
-	//publish pose
-	//grasp_pub.publish(grasp_pose);
-	
 	return true;
 }
 
-bool serviceCallback(google_goggles_srvs::AlignObject::Request& request, google_goggles_srvs::AlignObject::Response& response) {
+bool serviceCallbackObject(google_goggles_srvs::AlignObject::Request& request, google_goggles_srvs::AlignObject::Response& response) {
 	ROS_INFO("AlignObject service called!");
 	geometry_msgs::PoseStamped pose;
 	pose.header.stamp = ros::Time(0);
 	align(request.object.cloud,pose);
+	if (pose.header.stamp == ros::Time(0)) {
+		ROS_ERROR("Align call failed!");
+		return false;
+	}
+	response.pose = pose;
+	return true;
+}
+
+bool serviceCallbackCloud(google_goggles_srvs::AlignCloud::Request& request, google_goggles_srvs::AlignCloud::Response& response) {
+	ROS_INFO("AlignObject service called!");
+	geometry_msgs::PoseStamped pose;
+	pose.header.stamp = ros::Time(0);
+	align(request.cloud,pose);
 	if (pose.header.stamp == ros::Time(0)) {
 		ROS_ERROR("Align call failed!");
 		return false;
@@ -307,7 +263,8 @@ int main(int argc, char* argv[]) {
 	
 	testGraspsService = new ros::ServiceClient(nh.serviceClient<graspit_srvs::TestGrasps>("test_grasps"));
 	
-	alignObjectService = new ros::ServiceServer(nh.advertiseService("align_object", serviceCallback));
+	alignObjectService = new ros::ServiceServer(nh.advertiseService("align_object", serviceCallbackObject));
+	alignCloudService = new ros::ServiceServer(nh.advertiseService("align_cloud", serviceCallbackCloud));
 	
 	ROS_INFO("Pose estimator ready");
 

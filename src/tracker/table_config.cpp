@@ -14,5 +14,5 @@ int TableConfig::OBJECT_CLUSTER_MIN_SIZE = 15;
 float TableConfig::OBJECT_MATCH_TOLERANCE = .04;
 float TableConfig::ABOVE_TABLE_CUTOFF = .01;
 
-float TableConfig::MAX_X_DIST = 0.6;
+float TableConfig::MAX_X_DIST = 1;
 float TableConfig::MAX_Y_DIST = 0.4;

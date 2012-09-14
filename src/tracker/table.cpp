@@ -19,8 +19,8 @@ template <typename T> int sgn(T val) {
 
 ColorCloudPtr getPointsOnTableHull(ColorCloudPtr cloud, ColorCloudPtr hull, vector<pcl::Vertices> polys, float height) {
   ColorCloudPtr cloudOnTable = filterZ(cloud, height, 100);
-//   cloudOnTable = filterX(cloudOnTable,0,TableConfig::MAX_X_DIST);
-//   cloudOnTable = filterY(cloudOnTable,-TableConfig::MAX_Y_DIST,TableConfig::MAX_Y_DIST);
+  cloudOnTable = filterX(cloudOnTable,0,TableConfig::MAX_X_DIST);
+  cloudOnTable = filterY(cloudOnTable,-TableConfig::MAX_Y_DIST,TableConfig::MAX_Y_DIST);
 //   cloudOnTable = filterX(cloudOnTable,-100,100);
 //   cloudOnTable = filterY(cloudOnTable,-0.5,0.5);
   ColorCloudPtr cropped = cropToHull(cloudOnTable, hull, polys);

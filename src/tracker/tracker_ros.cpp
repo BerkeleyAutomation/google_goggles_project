@@ -39,7 +39,19 @@ TabletopTrackerROS::TabletopTrackerROS(ros::NodeHandle nh,TabletopTracker::Mode 
 void TabletopTrackerROS::callback(const sensor_msgs::PointCloud2& msg) {
 	//ROS_INFO("Got msg");
 	ColorCloudPtr cloud(new ColorCloud());
-	pcl::fromROSMsg(msg, *cloud);
+	bool has_color = false;
+	for (size_t i=0;i<msg.fields.size();i++) {
+		has_color |= (msg.fields.at(i).name == "rgb");
+	}
+	
+	if (!has_color) {
+		CloudPtr gray_cloud(new Cloud());
+		pcl::fromROSMsg(msg, *gray_cloud);
+		pcl::copyPointCloud(*gray_cloud,*cloud);
+	} else {
+		pcl::fromROSMsg(msg, *cloud);
+	}
+	
 	setLatest(cloud);
 	latest_stamp = msg.header.stamp;
 	latest_cloud_frame = msg.header.frame_id;

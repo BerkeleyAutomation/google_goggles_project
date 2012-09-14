@@ -20,6 +20,7 @@ from geometry_msgs.msg import *
 from sensor_msgs.msg import Image, PointCloud2
 from std_msgs.msg import Float32, String, Header
 from cv_bridge import CvBridge, CvBridgeError
+from pcl.msg import PolygonMesh
 import tf
 import tf.transformations as tft
 
@@ -35,7 +36,10 @@ class ObjectLoader:
 		self.align_object_srv_name = 'align_object'
 		self.align_object_srv = None
 		if not self.fake_alignment:
+			rospy.wait_for_service(self.align_object_srv_name)
 			self.align_object_srv = rospy.ServiceProxy(self.align_object_srv_name,google_goggles_srvs.srv.AlignObject)
+		else:
+			self.fake_align_pub = rospy.Publisher('aligned_object',PointCloud2)
 		
 		self.grasp_poses_topic = grasp_poses_topic
 		self.grasp_poses_pub = rospy.Publisher(self.grasp_poses_topic,PoseArray,latch=True)
@@ -52,49 +56,55 @@ class ObjectLoader:
 		
 		ref_object = None
 		ref_cloud = None
-		ref_grasps = None
+		ref_grasps = []
+		ref_grasp_poses = []
 		
 		rospy.loginfo('Loading bag file...')
 		bag = rosbag.Bag(filename)
 		rospy.loginfo('Searching bag file for data')
 		for topic,msg,t in bag.read_messages():
 			topic = topic.split('/')[-1]
-			if topic.endswith('object_ref_data'):
-				rospy.loginfo('Got reference data')
+			if msg._type == 'google_goggles_msgs/ObjectReferenceData': #if topic.endswith('object_ref_data'):
+				rospy.loginfo('Got reference data on topic %s',topic)
+				#if ref_object:
+				#	rospy.logerr('Bag file has multiple objects!')
+				#	return False
 				ref_object = msg.object
-				ref_grasps = msg.grasps
-				break
-			if topic.endswith('object_mesh'):
-				rospy.loginfo('Got mesh')
+				ref_grasps += msg.grasps
+			elif msg._type == 'pcl/PolygonMesh': #if topic.endswith('object_mesh'):
+				rospy.loginfo('Got mesh on topic %s',topic)
+				#if ref_object:
+				#	rospy.logerr('Bag file has multiple objects!')
+				#	return False
 				ref_object = msg
-			elif topic.endswith('cloud'):
-				rospy.loginfo('Got cloud')
+			elif msg._type == 'sensor_msgs/PointCloud2':
+				rospy.loginfo('Got cloud on topic %s',topic)
 				ref_cloud = msg
-			#TODO: fix the following
-			#elif topic.endswith('object_grasps'):
-				#rospy.loginfo('Got grasps')
-				#ref_grasps = msg
+			elif msg._type == 'geometry_msgs/PoseArray':
+				ref_grasp_poses += msg.poses
 		
 		if ref_object is None:
 			try:
 				rospy.loginfo('Converting cloud to mesh')
-				rospy.wait_for_service(self.create_mesh_srv_name)
-				ref_object = self.create_mesh_srv(ref_cloud)
+				rospy.wait_for_service(self.cloud_to_mesh_srv_name)
+				ref_object = self.cloud_to_mesh_srv(ref_cloud)
 			except rospy.ServiceException, e:
 				rospy.logerr("Create mesh service error: %s",str(e))
-				return
+				return False
 		
 		try:
 			rospy.loginfo('Aligning object...')
 			if self.fake_alignment:
+				rospy.loginfo("Publishing fake-aligned object")
+				self.fake_align_pub.publish(ref_object.cloud)
 				object_pose = tft.identity_matrix()
 				object_pose_header = Header()
 				object_pose_header.frame_id = ref_object.cloud.header.frame_id
 				object_pose_header.stamp = rospy.Time.now()
 			else:
-				rospy.wait_for_service(self.align_object_srv_name)
 				align_object_response = self.align_object_srv(ref_object)
 				object_pose_msg = align_object_response.pose
+				#print "Aligned object pose: ", object_pose_msg
 				object_pose_header = object_pose_msg.header
 				object_pose_q = numpy.array([ \
 						object_pose_msg.pose.orientation.x,
@@ -106,17 +116,12 @@ class ObjectLoader:
 						object_pose_msg.pose.position.y,
 						object_pose_msg.pose.position.z])
 				rot = numpy.mat(tft.quaternion_matrix(object_pose_q))
-				trans = numpy.mat(tft.translation_matrix(object_pose_q))
+				trans = numpy.mat(tft.translation_matrix(object_pose_p))
 				object_pose = trans * rot
 		except rospy.ServiceException, e:
 			rospy.logerr("Align Object service error: %s",str(e))
-			return
+			return False
 			
-		_grasp_pose_array = PoseArray()
-		_grasp_pose_array.header = object_pose_header
-		_grasp_pose_array.poses = [g.grasp_pose for g in ref_grasps]
-		self.grasp_poses_pub.publish(_grasp_pose_array)
-		
 		#apply tf grasp
 		grasps = []
 		for grasp in ref_grasps:
@@ -155,5 +160,5 @@ class ObjectLoader:
 			grasp_pose_array.poses.append(grasp_pose_msg)
 			
 		rospy.loginfo('Publishing grasps')
-		#self.grasp_poses_pub.publish(grasp_pose_array)
+		self.grasp_poses_pub.publish(grasp_pose_array)
 		rospy.loginfo('Object loading complete')

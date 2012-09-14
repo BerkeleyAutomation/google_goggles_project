@@ -10,11 +10,12 @@ from collections import defaultdict
 from math import *
 import numpy
 
+from std_msgs.msg import Float32
 from geometry_msgs.msg import *
 import tf
 import tf.transformations as tft
 
-from brett2.PR2 import PR2
+from brett2.PR2 import PR2, IKFail
 import openravepy
 
 from actionlib import SimpleActionClient, SimpleGoalState
@@ -40,16 +41,21 @@ class Grasper:
 		
 		#self.move_arm = SimpleActionClient('move_right_arm', MoveArmAction)
 		
-		if grasp_pose_topic:
-			self.grasp_pose_pub = rospy.Subscriber(grasp_pose_topic,PoseStamped,self.grasp_pose_callback)
-		
-		if grasp_pose_array_topic:
-			self.grasp_pose_array_pub = rospy.Subscriber(grasp_pose_array_topic,PoseArray,self.grasp_pose_array_callback)
+		self.pregrasp_pose_pub = rospy.Publisher('pregrasp_pose',PoseStamped,latch=True);
+		self.grasp_pose_pub = rospy.Publisher('grasp_pose',PoseStamped,latch=True);
+		self.lift_pose_pub = rospy.Publisher('lift_pose',PoseStamped,latch=True);
+		self.grasp_pose_array_pub = rospy.Publisher('grasp_pose_array',PoseArray,latch=True);
 		
 		self.table_height = table_height
 		self.table_height_topic = table_height_topic
 		if self.table_height_topic:
 			self.table_height_sub = rospy.Subscriber(self.table_height_topic, Float32, self.table_height_callback)
+		
+		if grasp_pose_topic:
+			self.grasp_pose_sub = rospy.Subscriber(grasp_pose_topic,PoseStamped,self.grasp_pose_callback)
+		
+		if grasp_pose_array_topic:
+			self.grasp_pose_array_sub = rospy.Subscriber(grasp_pose_array_topic,PoseArray,self.grasp_pose_array_callback)
 	
 	def grasp_pose_array_callback(self,msg):
 		for idx, pose in enumerate(msg.poses):
@@ -65,18 +71,14 @@ class Grasper:
 			print 'No grasp was successful :('
 
 	def grasp_pose_callback(self,msg):
-		print "called", self.table_height
 		if not self.table_height: return
 		base_frame = 'base_footprint'
-		
-		rospy.loginfo("opening gripper")
-		self.pr2.rgrip.open()
-		rospy.sleep(1.5)
+		#tool_frame = 'r_gripper_ tool_frame'
+		tool_frame = 'r_wrist_roll_link'
 		
 		(tf_trans,tf_rot) = self.pr2.tf_listener.lookupTransform(msg.header.frame_id,base_frame,rospy.Time(0))
 		msg_tf = numpy.mat(numpy.dot(tft.translation_matrix(tf_trans),tft.quaternion_matrix(tf_rot)))
 		
-		rospy.loginfo("moving arm")
 		q = numpy.array([msg.pose.orientation.x,msg.pose.orientation.y,msg.pose.orientation.z,msg.pose.orientation.w])
 		p = numpy.array([msg.pose.position.x,msg.pose.position.y,msg.pose.position.z])
 		rot = numpy.mat(tft.quaternion_matrix(q))
@@ -91,7 +93,8 @@ class Grasper:
 		
 		init_dist = 0.1
 		#first_pose = pose * tft.translation_matrix(-init_dist * x_axis.transpose())
-		first_pose = pose * tft.translation_matrix(numpy.array([0,0,0.3]))
+		first_pose = pose * tft.translation_matrix([-init_dist,0,0])
+		#first_pose = pose * tft.translation_matrix(numpy.array([0,0,0.3]))
 		
 		lift_pose = pose * tft.translation_matrix(numpy.array([0,0,0.3]))
 		
@@ -106,39 +109,97 @@ class Grasper:
 		
 		
 		qt,pt = (tft.quaternion_from_matrix(first_pose),tft.translation_from_matrix(first_pose)) 
-		#pr2.rarm.set_cart_target(qt,pt,msg.header.frame_id) #quat, xyz, ref_frame
-		#joints = pr2.rarm.cart_to_joint(numpy.array(first_pose,base_frame,'r_gripper_tool_frame')
-		print "first_pose:"
-		print numpy.array(first_pose)
+		#print "first_pose:"
+		#print numpy.array(first_pose)
 		
 		filteropts = openravepy.openravepy_int.IkFilterOptions.CheckEnvCollisions
 		filteropts = filteropts | openravepy.openravepy_int.IkFilterOptions.IgnoreSelfCollisions
 		
-		try:
-			self.pr2.rarm.goto_pose_matrix(numpy.array(first_pose),base_frame,'r_gripper_tool_frame',filter_options=filteropts); rospy.sleep(10)
-		except IKFail, e:
-			print 'IK failed for first pose:',e
+		invalid = False
+		if not self.pr2.rarm.check_pose_matrix(numpy.array(first_pose),base_frame,tool_frame,filter_options=filteropts):
+			print "IK invalid: pregrasp pose"
+			invalid = True
+			#return False
+		if not self.pr2.rarm.check_pose_matrix(numpy.array(pose),base_frame,tool_frame,filter_options=filteropts):
+			print "IK invalid: grasp pose"
+			invalid = True
+			#return False
+		if not self.pr2.rarm.check_pose_matrix(numpy.array(lift_pose),base_frame,tool_frame,filter_options=filteropts):
+			print "IK invalid: lift pose"
+			invalid = True
+			#return False
+		if invalid:
 			return False
 		
-		print "second pose:"
-		print numpy.array(pose)
-		#pr2.rarm.set_cart_target(tft.quaternion_from_matrix(pose),tft.translation_from_matrix(pose),msg.header.frame_id)
+		rospy.loginfo("IK valid, proceeding with grasp")
+		
+		
+		rospy.loginfo("opening gripper")
+		self.pr2.rgrip.open()
+		#rospy.sleep(1.5)
+		
+		rospy.loginfo("moving arm")
+		
+		pose_array = PoseArray()
+		pose_array.header.stamp = rospy.Time.now()
+		pose_array.header.frame_id = base_frame
+		
+		pub_poses = [ \
+			(self.pregrasp_pose_pub,first_pose), \
+			(self.grasp_pose_pub,pose), \
+			(self.lift_pose_pub,lift_pose)]
+		
+		for pub,pose_to_pub in pub_poses:
+			msg = PoseStamped()
+			msg.header = pose_array.header
+			mq,mp = (tft.quaternion_from_matrix(pose_to_pub),tft.translation_from_matrix(pose_to_pub)) 
+			msg.pose.orientation.x = mq[0]
+			msg.pose.orientation.y = mq[1]
+			msg.pose.orientation.z = mq[2]
+			msg.pose.orientation.w = mq[3]
+			msg.pose.position.x = mp[0]
+			msg.pose.position.y = mp[1]
+			msg.pose.position.z = mp[2]
+			pose_array.poses.append(msg.pose)
+			pub.publish(msg)
+		
+		self.grasp_pose_array_pub.publish(pose_array)
+		
 		try:
-			self.pr2.rarm.goto_pose_matrix(numpy.array(pose),base_frame,'r_gripper_tool_frame',filter_options=filteropts); rospy.sleep(5)
+			rospy.loginfo("Going to pregrasp")
+			self.pr2.rarm.goto_pose_matrix(numpy.array(first_pose),base_frame,tool_frame,filter_options=filteropts)
+			rospy.sleep(10)
+		except IKFail, e:
+			print 'IK failed for first pose:',e
+			self.pr2.rarm.goto_posture('side')
+			self.pr2.rgrip.open()
+			return False
+		
+		#print "second pose:"
+		#print numpy.array(pose)
+		try:
+			rospy.loginfo("Moving to grasp")
+			self.pr2.rarm.goto_pose_matrix(numpy.array(pose),base_frame,tool_frame,filter_options=filteropts)
+			rospy.sleep(5)
 		except IKFail, e:
 			print 'IK failed for second pose:',e
+			self.pr2.rarm.goto_posture('side')
+			self.pr2.rgrip.open()
 			return False
 		
 		rospy.loginfo("closing gripper")
 		self.pr2.rgrip.close(); rospy.sleep(3)
 		
-		print "lifting:"
-		print numpy.array(lift_pose)
-		#pr2.rarm.set_cart_target(tft.quaternion_from_matrix(pose),tft.translation_from_matrix(pose),msg.header.frame_id)
+		#print "lifting:"
+		#print numpy.array(lift_pose)
 		try:
-			self.pr2.rarm.goto_pose_matrix(numpy.array(lift_pose),base_frame,'r_gripper_tool_frame',filter_options=filteropts); rospy.sleep(5)
+			rospy.loginfo("lifting")
+			self.pr2.rarm.goto_pose_matrix(numpy.array(lift_pose),base_frame,tool_frame,filter_options=filteropts)
+			rospy.sleep(5)
 		except IKFail, e:
 			print 'IK failed for lifting:',e
+			self.pr2.rarm.goto_posture('side')
+			self.pr2.rgrip.open()
 			return False
 		
 		#rospy.loginfo("reseting")

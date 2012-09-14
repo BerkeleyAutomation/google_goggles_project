@@ -1,0 +1,12 @@
+rosrun google_goggles point_cloud_to_mesh --publish -g --save-as $(rospack find google_goggles)/data/points/ref/mustard
+rosrun_in fuerte google_goggles point_cloud_to_mesh
+
+rosrun google_goggles pose_estimator
+rosrun google_goggles pose_estimator /camera/depth_registered/points:=/camera/depth_registered/points_filtered
+
+
+rosrun_in electric pcl_ros pcd_to_pointcloud $(rospack find google_goggles)/data_old/points/ref/archive/mustard_crop_adjusted.pcd 0
+
+rosrun_in electric google_goggles contact_cloud.py --ros --fake-alignment --fake-google mustard
+
+rosrun rosx image_file_publisher -r 1 $(rospack find google_goggles)/data/images/unorganized/mustard/mustard_upright_wood_bright-diffuse_low_2012-09-09-T15-55-07.jpg /prosilica/image_rect_color
