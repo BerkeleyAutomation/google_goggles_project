@@ -2,7 +2,7 @@
 
 from collections import defaultdict
 
-import sys, os, os.path, random, time
+import sys, os, os.path, random, time, math
 from optparse import OptionParser
 import pickle
 
@@ -90,19 +90,24 @@ def main(argv):
 	parser = OptionParser('%prog [OPTIONS]')
 	parser.add_option('--test',action='store_true',default=False)
 	
+	parser.add_option('--name')
+	
 	parser.add_option('-d','--dir',dest='validation_dir')
 	parser.add_option('-v','--validation-dir',default='.')
 	parser.add_option('-t','--training-dir')
+	parser.add_option('--round-dirs',dest='set_training_round_dirs',action='store_true')
 	parser.add_option('--set-training-round-dirs',action='store_true',default=False)
 	
 	parser.add_option('--seed')
 	parser.add_option('--random',action='store_true',default=False)
 	parser.add_option('--num-samples',type='int',default=1)
+	parser.add_option('--sample-all',action='store_true',default=False)
 	
 	parser.add_option("--num-rounds",type='int',default=0)
 	parser.add_option("--one-shot",dest='train-all',action='store_true')
 	parser.add_option("--validate-only",action='store_true',default=False)
 	parser.add_option("--validation-only",action='store_true',dest='validate_only')
+	parser.add_option("--train-only",action='store_true')
 	parser.add_option('--train-all',action='store_true',default=False)
 	
 	parser.add_option('--dont-validate-training-images',action='store_true',default=False)
@@ -112,7 +117,7 @@ def main(argv):
 	
 	(options,args) = parser.parse_args()
 	
-	if options.clear or options.clear_first:
+	if not options.test and (options.clear or options.clear_first):
 		print "clearing..."
 		res = GoogleGoggles.clear()
 		print res['status']
@@ -134,7 +139,7 @@ def main(argv):
 		options.train_all = True
 	else:
 		options.training_dir = [options.training_dir]
-		
+	
 	if options.test:
 		print 'TESTING!'
 	
@@ -147,9 +152,13 @@ def main(argv):
 		for d in options.training_dir:
 			print "  %s" % d
 	
-	print "Validation dir: %s" % options.validation_dir
+	image_dirs = []
+	if not options.train_only:
+		print "Validation dir: %s" % options.validation_dir
+		image_dirs = [options.validation_dir]
 	
-	image_dirs = [options.validation_dir] + options.training_dir
+	image_dirs = image_dirs + options.training_dir
+	
 	images = []
 	[images.append([]) for image_dir in image_dirs]
 	
@@ -209,8 +218,14 @@ def main(argv):
 				images[idx].append(tuple(fields))
 				objects.add(fields[1])
 	
-	training_images = images[1:]
-	validation_images = images[0]
+	if options.train_only:
+		validation_images = []
+	else:
+		validation_images = images[0]
+		del images[0]
+	
+	training_images = images
+	
 	images = None
 	
 	images_not_learned = []
@@ -240,7 +255,13 @@ def main(argv):
 	
 	start_time = time.localtime()
 	
-	filename_base = 'results_' + time.strftime(TIME_FORMAT,start_time)
+	
+	filename_base = 'results_'
+	
+	if options.name:
+		filename_base = filename_base + options.name + '_'
+	
+	filename_base = filename_base + time.strftime(TIME_FORMAT,start_time)
 	if options.test:
 		filename_base = 'test_' + filename_base
 	
@@ -289,12 +310,20 @@ def main(argv):
 	
 	learned_images_to_this_round = []
 	
+	false_detects = []
+	
 	try:
 		while images_not_learned or options.validate_only: #and not rospy.is_shutdown():
 			round_num += 1
-			print "Round #%d" % round_num
-			f.write('Round %d:\n' % (round_num))
+			if options.num_rounds >= 1:
+				print "Round #%d/%d" % (round_num,options.num_rounds)
+				f.write('Round %d/%d:\n' % (round_num,options.num_rounds))
+			else:
+				print "Round #%d" % round_num
+				f.write('Round %d:\n' % (round_num))
 			round_start_time = time.mktime(time.localtime())
+			
+			this_round_false_detects = []
 			
 			if not options.validate_only:
 				print 'Learning images...'
@@ -304,42 +333,50 @@ def main(argv):
 				else:
 					images_for_this_round = training_images[round_num-1]
 				images_learned_this_round = []
-				for object_name in sorted(objects):
-					#if rospy.is_shutdown(): break
-					#print object_name
-					object_images = [img for img in images_for_this_round if img[1] == object_name]
-					if not object_images: continue
-					
-					if options.train_all:
-						imgs_to_learn = object_images
-					else:
-						imgs_to_learn = random.sample(object_images,options.num_samples)
-					
-					for img_to_learn in imgs_to_learn:
-						print "Learning",img_to_learn[1:],
-						if len(training_images) == 1:
-							t_dir = options.training_dir[0]
-						else:
-							t_dir = options.training_dir[round_num-1]
-						if not options.test:
-							try:
-								res = GoogleGoggles.learn(os.path.join(t_dir,img_to_learn[0]),object_name)
-							except Exception, e:
-								print 'Exception occured during call to learn:',e
-								res = {'status':'EXCEPTION','exception':e}
-						else:
-							res = {'status':'SUCCESS'}
+				
+				if options.train_all:
+					print 'Learning all %d images' % len(images_for_this_round)
+					imgs_to_learn = images_for_this_round
+				elif options.sample_all:
+					num_samples = min(options.num_samples,len(images_for_this_round))
+					print 'Sampling %d images from %d across all objects' % (num_samples,len(images_for_this_round))
+					imgs_to_learn = random.sample(images_for_this_round,min(options.num_samples,len(images_for_this_round)))
+				else:
+					print 'Sampling %d images for each object' % options.num_samples
+					imgs_to_learn = []
+					for object_name in sorted(objects):
+						#if rospy.is_shutdown(): break
+						#print object_name
+						object_images = [img for img in images_for_this_round if img[1] == object_name]
+						if not object_images: continue
 						
-						learn_responses[-1].append((t_dir,img_to_learn,res))
-						print res['status']
-						if res['status'] != 'SUCCESS':
-							#print 'failed!'
-							print res
-							continue
-						#print 'done'
+						imgs_to_learn += random.sample(object_images,min(options.num_samples,len(object_images)))
 					
-						images_not_learned.remove(img_to_learn)
-						images_learned_this_round.append(img_to_learn)
+				for img_to_learn in imgs_to_learn:
+					print "Learning",img_to_learn[1:],
+					if len(training_images) == 1:
+						t_dir = options.training_dir[0]
+					else:
+						t_dir = options.training_dir[round_num-1]
+					if not options.test:
+						try:
+							res = GoogleGoggles.learn(os.path.join(t_dir,img_to_learn[0]),img_to_learn[1])
+						except Exception, e:
+							print 'Exception occured during call to learn:',e
+							res = {'status':'EXCEPTION','exception':e}
+					else:
+						res = {'status':'SUCCESS'}
+					
+					learn_responses[-1].append((t_dir,img_to_learn,res))
+					print res['status']
+					if res['status'] != 'SUCCESS':
+						#print 'failed!'
+						print res
+						continue
+					#print 'done'
+				
+					images_not_learned.remove(img_to_learn)
+					images_learned_this_round.append(img_to_learn)
 				
 				images_learned.append(images_learned_this_round)
 				
@@ -377,12 +414,23 @@ def main(argv):
 			print 'Testing images...'
 			match_responses.append([])
 			data_this_round = numpy.zeros((len(validation_images),1),dtype=int)
+			
+			if options.dont_validate_training_images:
+				num_images_to_validate = len(validation_images) - len(learned_images_to_this_round)
+			else:
+				num_images_to_validate = len(validation_images)
+			
+			actually_tested_idx = -1
 			for idx,img in enumerate(validation_images):
 				#if rospy.is_shutdown(): break
 				
+				actually_tested_idx+=1
+				#print 'testing %d/%d' % (actually_tested_idx+1,num_images_to_validate) , img[1:],
 				print 'testing %d/%d' % (idx+1,len(validation_images)) , img[1:],
+				
 				if options.dont_validate_training_images and \
 						[li for li in learned_images_to_this_round if os.path.basename(img[0]) == os.path.basename(li[0])]:
+					print '[skipped]',
 					res = {'status':'SUCCESS','image_label':img[1],'skipped':True}
 					success = True
 				elif not options.test:
@@ -391,18 +439,29 @@ def main(argv):
 					except Exception, e:
 						print 'Exception occured during call to learn:',e
 						res = {'status':'EXCEPTION','exception':e,'image_label':''}
-					success = res['image_label'] == img[1]
+					
 				else:
 					if data_table is not None and data_table[idx,-1]:
 						success = True
 					else:
-						success = bool(random.randint(0,1))
-					if success:
-						res = {'status':'SUCCESS','image_label':img[1]}
-					else:
-						res = {'status':'FAILURE','image_label':''}
+						choice = random.random()
+						if choice < 0.5:
+							res = {'status':'SUCCESS','image_label':img[1]}
+						else:
+							choice = random.random()
+							if choice < 0.25:
+								#false detection
+								res = {'status':'SUCCESS','image_label':random.choice([o for o in objects if o != img[1]])}
+							else:
+								res = {'status':'FAILURE','image_label':''}
+				
 				match_responses[-1].append((options.validation_dir,img,res))
-				if success:
+				success = res['status'] == 'SUCCESS' and res['image_label'] == img[1]
+				
+				if res['image_label'] and not success:
+					print 'FALSE DETECT:',res['image_label']
+					this_round_false_detects.append((img,res['image_label']))
+				elif success:
 					print res['status']
 				else:
 					print res['status'], res['image_label']
@@ -411,7 +470,10 @@ def main(argv):
 				
 				data_this_round[idx,0] = int(success)
 			
-			print '  %d/%d successes' % (numpy.sum(data_this_round[:,0]),len(validation_images))
+			num_successes_this_round = numpy.sum(data_this_round[:,0])
+			total_this_round = len(validation_images)
+			
+			print '  %d/%d successes' % (num_successes_this_round,total_this_round)
 			
 			if data_table is None:
 				data_table = data_this_round
@@ -457,6 +519,14 @@ def main(argv):
 				for key,val in tested_fields.iteritems():
 					f.write("  %s: %d/%d\n" % (key,val[0],val[1]))
 		
+			if this_round_false_detects:
+				f.write('False detects:\n')
+				for img,label in this_round_false_detects:
+					f.write('%s: %s\n' % (img[0],label))
+			else:
+				f.write('No false detects\n')
+			false_detects.append(this_round_false_detects)
+			
 			f.write('Raw data:\n')
 			f.write(str(data_table[:,round_num-1].flatten().tolist())+'\n')
 			
@@ -465,7 +535,7 @@ def main(argv):
 			print 'Round complete, took %f seconds' % round_time
 			f.write('Round time: %fs\n' % round_time)
 			
-			if numpy.all(data_table[:,-1]) \
+			if (not options.train_only and numpy.all(data_table[:,-1])) \
 					or round_num == options.num_rounds \
 					or not images_not_learned:
 				break
@@ -479,7 +549,7 @@ def main(argv):
 	
 	end_time = time.mktime(time.localtime())
 	total_time = end_time - time.mktime(start_time)
-	total_minutes = round(total_time/60)
+	total_minutes = math.floor(total_time/60)
 	total_seconds_into_minute = total_time - 60 * total_minutes
 	
 	if not options.validate_only:
@@ -497,6 +567,9 @@ def main(argv):
 	if not options.validate_only:
 		pkld['learn_responses'] = learn_responses
 	pkld['match_responses'] = match_responses
+	
+	pkld['false_detects'] = false_detects
+	#pkld['num_false_detects'] = num_false_detects
 	
 	pf = open(pickle_filename,'w')
 	pickle.dump(pkld,pf)
@@ -526,7 +599,17 @@ def main(argv):
 			print '  Round #%d Recognized %d/%d' % (i+1,numpy.sum(data_table[:,i].flatten()),len(validation_images))
 			f.write('  Round #%d Recognized %d/%d\n' % (i+1,numpy.sum(data_table[:,i].flatten()),len(validation_images)))
 	
-	f.close()
+	all_false_detects = [item for sublist in false_detects for item in sublist]
+	if all_false_detects:
+		print 'False detects: %d' % len(all_false_detects)
+		f.write('False detects: %d\n' % len(all_false_detects))
+		for img,label in all_false_detects:
+			print '%s: %s' % (img[0],label)
+			f.write('%s: %s\n' % (img[0],label))
+	else:
+		print 'No false detects'
+		f.write('No false detects\n')
+	
 	
 	print "Wrote results to %s" % filename
 	
