@@ -513,18 +513,20 @@ void sub_callback(const sensor_msgs::PointCloud2& msg) {
 	*/
 }
 
-#define STRINGIFY(X) STRINGIFY_HELPER(X)
-#define STRINGIFY_HELPER(X) #X
+#ifndef BENK_STRINGIFY
+#define BENK_STRINGIFY(X) BENK_STRINGIFY_HELPER(X)
+#define BENK_STRINGIFY_HELPER(X) #X
+#endif
 
 #define SAVE_OPT_ARG(ARGNAME,VARNAME) \
-if (arg == "--" STRINGIFY(ARGNAME)) { \
+if (arg == "--" BENK_STRINGIFY(ARGNAME)) { \
 	arg_ind++; \
 	std::stringstream ss;\
 	ss << argv[arg_ind]; \
 	ss >> VARNAME; \
 }
 
-#define PRINT_VALUE(VARNAME) std::cout << STRINGIFY(VARNAME) << ": " << VARNAME << std::endl
+#define PRINT_VALUE(VARNAME) std::cout << BENK_STRINGIFY(VARNAME) << ": " << VARNAME << std::endl
 
 int main(int argc, char* argv[]) {
 	ros::init(argc,argv,"point_cloud_to_mesh_repub",ros::init_options::AnonymousName);

@@ -9,11 +9,15 @@ from collections import defaultdict
 
 from math import *
 import numpy
+import random
 
 from std_msgs.msg import Float32
 from geometry_msgs.msg import *
+from sensor_msgs.msg import *
 import tf
 import tf.transformations as tft
+
+import google_goggles_srvs.srv
 
 from brett2.PR2 import PR2, IKFail
 import openravepy
@@ -27,22 +31,47 @@ from pr2_controllers_msgs.msg import *
 from std_srvs.srv import Empty
 import actionlib
 
+import struct
+
+from threading import Thread
+
+class RaveGUI(Thread):
+    
+    def __init__(self, env):
+        Thread.__init__(self)
+        self.env = env
+        
+    def run(self):
+        self.env.SetViewer('qtcoin')
+        while not rospy.is_shutdown():
+            rospy.sleep(.01)
+
 class Grasper:
 	pr2 = None
 	
-	def __init__(self,pr2=None,grasp_pose_topic=None,grasp_pose_array_topic=None,table_height=None,table_height_topic=None):
-		self.pr2 = pr2
-		if not self.pr2:
-			self.pr2 = PR2()
+	def __init__(self,
+			table_height=None,
+			grasp_pose_topic=None,
+			grasp_pose_array_topic=None,
+			table_height_topic=None,
+			object_mesh_topic=None,
+			object_point_cloud_topic=None,
+			object_pose_topic=None):
+		self.pr2 = PR2.create()
 		
 		rospy.loginfo("reseting")
 		self.pr2.rarm.goto_posture('side')
 		self.pr2.rgrip.open()
 		
+		
+		self.base_frame = 'base_footprint'
+		#self.tool_frame = 'r_gripper_tool_frame'
+		self.tool_frame = 'r_wrist_roll_link'
+		
 		#self.move_arm = SimpleActionClient('move_right_arm', MoveArmAction)
 		
 		self.pregrasp_pose_pub = rospy.Publisher('pregrasp_pose',PoseStamped,latch=True);
-		self.grasp_pose_pub = rospy.Publisher('grasp_pose',PoseStamped,latch=True);
+		self.grasp_pose_pub = rospy.Publisher('grasp_pose',PoseStamped,latch=False);
 		self.lift_pose_pub = rospy.Publisher('lift_pose',PoseStamped,latch=True);
 		self.grasp_pose_array_pub = rospy.Publisher('grasp_pose_array',PoseArray,latch=True);
 		
@@ -51,32 +80,69 @@ class Grasper:
 		if self.table_height_topic:
 			self.table_height_sub = rospy.Subscriber(self.table_height_topic, Float32, self.table_height_callback)
 		
+		self.use_object_mesh = False
+		self.object_mesh = None
+		
+		self.use_object_pose = False
+		self.object_pose = None
+		self.object_mesh_topic = object_mesh_topic
+		if self.object_mesh_topic:
+			self.use_object_mesh = True
+			self.object_mesh_sub = rospy.Subscriber(object_mesh_topic,PolygonMesh,self.object_mesh_callback)
+		
+		self.object_point_cloud_topic = object_point_cloud_topic
+		if self.object_point_cloud_topic:
+			#print 'subscribing to ', object_point_cloud_topic
+			self.use_object_mesh = True
+			self.cloud_to_mesh_srv_name = 'create_mesh'
+			self.cloud_to_mesh_srv = rospy.ServiceProxy(self.cloud_to_mesh_srv_name, google_goggles_srvs.srv.CreateMesh)
+			rospy.loginfo('Waiting for create mesh service')
+			rospy.wait_for_service(self.cloud_to_mesh_srv_name)
+			self.object_point_cloud_sub = rospy.Subscriber(object_point_cloud_topic,PointCloud2,self.object_point_cloud_callback)
+		
+		self.object_pose_topic = object_pose_topic
+		if self.object_pose_topic:
+			self.use_object_pose = True
+			self.object_pose_sub = rospy.Subscriber(object_pose_topic,self.object_pose_callback)
+		
 		if grasp_pose_topic:
-			self.grasp_pose_sub = rospy.Subscriber(grasp_pose_topic,PoseStamped,self.grasp_pose_callback)
+			self.grasp_pose_sub = rospy.Subscriber(grasp_pose_topic,PoseStamped,self.grasp_pose)
 		
 		if grasp_pose_array_topic:
-			self.grasp_pose_array_sub = rospy.Subscriber(grasp_pose_array_topic,PoseArray,self.grasp_pose_array_callback)
+			self.grasp_pose_array_sub = rospy.Subscriber(grasp_pose_array_topic,PoseArray,self.grasp_pose_array)
 	
-	def grasp_pose_array_callback(self,msg):
-		for idx, pose in enumerate(msg.poses):
-			pose_stamped = PoseStamped()
-			pose_stamped.header = msg.header
-			pose_stamped.pose = pose
-			print 'Testing pose %d/%d' % (idx+1,len(msg.poses))
-			result = self.grasp_pose_callback(pose_stamped)
-			if result:
-				print 'Success!'
-				break
-		else:
-			print 'No grasp was successful :('
+	def grasp_pose_array(self,msg):
+		random.shuffle(msg.poses)
+		max_shift = -0.05
+		shift_steps = 5
+		result = None
+		for shift_step in xrange(shift_steps):
+			shift = max_shift * shift_step / shift_steps
+			if shift_step != 0:
+				print 'shifting table down by %f' % (-shift)
+			for idx, pose in enumerate(msg.poses):
+				pose_stamped = PoseStamped()
+				pose_stamped.header = msg.header
+				pose_stamped.pose = pose
+				print 'Testing pose %d/%d' % (idx+1,len(msg.poses))
+				result = self.grasp_pose(pose_stamped,delete_object_store=False,table_shift=shift)
+				if result is not None:
+					break
+			else:
+				print 'No grasp was successful :('
+			if result is not None:
+					break
+		self.object_mesh = None
+		self.object_pose = None
+		return result
 
-	def grasp_pose_callback(self,msg):
-		if not self.table_height: return
-		base_frame = 'base_footprint'
-		#tool_frame = 'r_gripper_ tool_frame'
-		tool_frame = 'r_wrist_roll_link'
+	def grasp_pose(self,msg,delete_object_store=True,table_shift=0):
+		if not self.table_height:
+			rospy.loginfo('waiting for table height...')
+			rospy.wait_for_message(self.table_height_topic,Float32)
+			print 'got it!'
 		
-		(tf_trans,tf_rot) = self.pr2.tf_listener.lookupTransform(msg.header.frame_id,base_frame,rospy.Time(0))
+		(tf_trans,tf_rot) = self.pr2.tf_listener.lookupTransform(msg.header.frame_id,self.base_frame,rospy.Time(0))
 		msg_tf = numpy.mat(numpy.dot(tft.translation_matrix(tf_trans),tft.quaternion_matrix(tf_rot)))
 		
 		q = numpy.array([msg.pose.orientation.x,msg.pose.orientation.y,msg.pose.orientation.z,msg.pose.orientation.w])
@@ -96,17 +162,51 @@ class Grasper:
 		first_pose = pose * tft.translation_matrix([-init_dist,0,0])
 		#first_pose = pose * tft.translation_matrix(numpy.array([0,0,0.3]))
 		
-		lift_pose = pose * tft.translation_matrix(numpy.array([0,0,0.3]))
+		lift_pose = tft.translation_matrix(numpy.array([0,0,0.3])) * pose
 		
 		for body in self.pr2.env.GetBodies():
-			if body.GetName() == 'table': break
-		else:
-			rospy.loginfo('adding table to openrave env')
-			body = openravepy.RaveCreateKinBody(self.pr2.env,'')
-			body.SetName('table')
-			body.InitFromBoxes(numpy.array([[pose_x,pose_y,self.table_height/2,0.25,1,self.table_height/2]]),False)
-			self.pr2.env.AddKinBody(body)
+			if body.GetName() == 'table':
+				self.pr2.env.Remove(body)
+				break
 		
+		#rospy.loginfo('adding table to openrave env')
+		body = openravepy.RaveCreateKinBody(self.pr2.env,'')
+		body.SetName('table')
+		body.InitFromBoxes(numpy.array([[pose_x,pose_y,self.table_height/2 + table_shift,0.25,1,self.table_height/2]]),True)
+		self.pr2.env.AddKinBody(body)
+		
+		if self.use_object_mesh:
+			if not self.object_mesh:
+				if self.object_mesh_topic:
+					rospy.loginfo('Waiting for object mesh...')
+				else:
+					rospy.loginfo('Waiting for object point cloud...')
+				rate = rospy.Rate(0.1)
+				while not self.object_mesh:
+					rate.sleep()
+			for body in self.pr2.env.GetBodies():
+				if body.GetName() == 'object':
+					self.pr2.env.Remove(body)
+					break
+			if self.use_object_pose:
+				if not self.object_pose:
+					rospy.loginfo('Waiting for object pose...')
+					rate = rospy.Rate(0.1)
+					while not self.object_mesh:
+						rate.sleep()
+				body.SetTransform(self.object_pose)
+			rospy.loginfo('adding object to openrave env')
+			body = openravepy.RaveCreateKinBody(self.pr2.env,'')
+			body.SetName('object')
+			body.InitFromTrimesh(self.object_mesh,True)
+			self.pr2.env.AddKinBody(body)
+			if delete_object_store:
+				self.object_mesh = None
+				self.object_pose = None
+			
+			#self.pr2.env.SetViewer('qtcoin')
+			#gui = RaveGUI(self.pr2.env)
+			#gui.start()
 		
 		qt,pt = (tft.quaternion_from_matrix(first_pose),tft.translation_from_matrix(first_pose)) 
 		#print "first_pose:"
@@ -116,20 +216,20 @@ class Grasper:
 		filteropts = filteropts | openravepy.openravepy_int.IkFilterOptions.IgnoreSelfCollisions
 		
 		invalid = False
-		if not self.pr2.rarm.check_pose_matrix(numpy.array(first_pose),base_frame,tool_frame,filter_options=filteropts):
+		if not self.pr2.rarm.check_pose_matrix(numpy.array(first_pose),self.base_frame,self.tool_frame,filter_options=filteropts):
 			print "IK invalid: pregrasp pose"
 			invalid = True
 			#return False
-		if not self.pr2.rarm.check_pose_matrix(numpy.array(pose),base_frame,tool_frame,filter_options=filteropts):
+		if not self.pr2.rarm.check_pose_matrix(numpy.array(pose),self.base_frame,self.tool_frame,filter_options=filteropts):
 			print "IK invalid: grasp pose"
 			invalid = True
 			#return False
-		if not self.pr2.rarm.check_pose_matrix(numpy.array(lift_pose),base_frame,tool_frame,filter_options=filteropts):
+		if not self.pr2.rarm.check_pose_matrix(numpy.array(lift_pose),self.base_frame,self.tool_frame,filter_options=filteropts):
 			print "IK invalid: lift pose"
 			invalid = True
 			#return False
 		if invalid:
-			return False
+			return None
 		
 		rospy.loginfo("IK valid, proceeding with grasp")
 		
@@ -142,7 +242,7 @@ class Grasper:
 		
 		pose_array = PoseArray()
 		pose_array.header.stamp = rospy.Time.now()
-		pose_array.header.frame_id = base_frame
+		pose_array.header.frame_id = self.base_frame
 		
 		pub_poses = [ \
 			(self.pregrasp_pose_pub,first_pose), \
@@ -167,40 +267,52 @@ class Grasper:
 		
 		try:
 			rospy.loginfo("Going to pregrasp")
-			self.pr2.rarm.goto_pose_matrix(numpy.array(first_pose),base_frame,tool_frame,filter_options=filteropts)
+			self.pr2.rarm.goto_pose_matrix(numpy.array(first_pose),self.base_frame,self.tool_frame,filter_options=filteropts)
 			rospy.sleep(10)
 		except IKFail, e:
 			print 'IK failed for first pose:',e
 			self.pr2.rarm.goto_posture('side')
 			self.pr2.rgrip.open()
-			return False
+			return None
 		
 		#print "second pose:"
 		#print numpy.array(pose)
 		try:
 			rospy.loginfo("Moving to grasp")
-			self.pr2.rarm.goto_pose_matrix(numpy.array(pose),base_frame,tool_frame,filter_options=filteropts)
+			self.pr2.rarm.goto_pose_matrix(numpy.array(pose),self.base_frame,self.tool_frame,filter_options=filteropts)
 			rospy.sleep(5)
 		except IKFail, e:
 			print 'IK failed for second pose:',e
 			self.pr2.rarm.goto_posture('side')
 			self.pr2.rgrip.open()
-			return False
+			return None
 		
 		rospy.loginfo("closing gripper")
-		self.pr2.rgrip.close(); rospy.sleep(3)
+		max_effort=-1
+		#max_effort = 40
+		self.pr2.rgrip.close(max_effort=max_effort); rospy.sleep(3)
 		
 		#print "lifting:"
 		#print numpy.array(lift_pose)
 		try:
 			rospy.loginfo("lifting")
-			self.pr2.rarm.goto_pose_matrix(numpy.array(lift_pose),base_frame,tool_frame,filter_options=filteropts)
+			self.pr2.rarm.goto_pose_matrix(numpy.array(lift_pose),self.base_frame,self.tool_frame,filter_options=filteropts)
 			rospy.sleep(5)
 		except IKFail, e:
 			print 'IK failed for lifting:',e
 			self.pr2.rarm.goto_posture('side')
 			self.pr2.rgrip.open()
+			return None
+		
+		jm = self.pr2.get_last_joint_message()
+		g_pos = jm.position[jm.name.index('r_gripper_joint')]
+		if g_pos < 0.005:
+			print 'Failure: gripper is closed!'
+			self.pr2.rarm.goto_posture('side')
+			self.pr2.rgrip.open()
 			return False
+		
+		print 'Success!'
 		
 		#rospy.loginfo("reseting")
 		#self.pr2.rarm.goto_posture('side')
@@ -211,3 +323,55 @@ class Grasper:
 	def table_height_callback(self,msg):
 		if not self.table_height: rospy.loginfo("got table height: %f" % msg.data)
 		self.table_height = msg.data
+	
+	def object_point_cloud_callback(self,msg):
+		print 'pc cb'
+		response = self.cloud_to_mesh_srv(msg)
+		self.object_mesh_callback(response.mesh)
+		
+	def object_mesh_callback(self,mesh):
+		print 'mesh cb'
+		if mesh.cloud.height != 1:
+			rospy.logerr('2D point cloud!')
+			return
+		elif mesh.cloud.width <= 0:
+			rospy.logerr('Invalid width!')
+			return
+		elif mesh.cloud.fields[0].name != "x" or mesh.cloud.fields[1].name != "y" or mesh.cloud.fields[2].name != "z":
+			rospy.logerr("point cloud has bad fields!")
+			return
+		elif mesh.cloud.fields[0].datatype != sensor_msgs.msg.PointField.FLOAT32:
+			rospy.logerr("point cloud is not float32!")
+			return
+		
+		v = numpy.empty((mesh.cloud.width,3))
+		t = numpy.empty((len(mesh.polygons),3))
+		
+		print "converting vertices"
+		
+		for i in xrange(mesh.cloud.width):
+			offset = mesh.cloud.point_step * i
+			for j in xrange(3):
+				v[i,j] = struct.unpack_from('f',mesh.cloud.data,offset+j*4)[0]
+		
+		print 'converting indices'
+		
+		for i in xrange(len(mesh.polygons)):
+			for j in xrange(3):
+				t[i,j] = mesh.polygons[i].vertices[j]
+		
+		self.object_mesh = openravepy.openravepy_int.TriMesh(v,t)
+		print 'done'
+		
+		
+		
+	def object_pose_callback(self,msg):
+		print 'object pose cb'
+		(tf_trans,tf_rot) = self.pr2.tf_listener.lookupTransform(msg.header.frame_id,self.base_frame,rospy.Time(0))
+		msg_tf = numpy.mat(numpy.dot(tft.translation_matrix(tf_trans),tft.quaternion_matrix(tf_rot)))
+		
+		q = numpy.array([msg.pose.orientation.x,msg.pose.orientation.y,msg.pose.orientation.z,msg.pose.orientation.w])
+		p = numpy.array([msg.pose.position.x,msg.pose.position.y,msg.pose.position.z])
+		rot = numpy.mat(tft.quaternion_matrix(q))
+		trans = numpy.mat(tft.translation_matrix(p))
+		self.object_pose = msg_tf * trans * rot

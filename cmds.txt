@@ -10,3 +10,10 @@ rosrun_in electric pcl_ros pcd_to_pointcloud $(rospack find google_goggles)/data
 rosrun_in electric google_goggles contact_cloud.py --ros --fake-alignment --fake-google mustard
 
 rosrun rosx image_file_publisher -r 1 $(rospack find google_goggles)/data/images/unorganized/mustard/mustard_upright_wood_bright-diffuse_low_2012-09-09-T15-55-07.jpg /prosilica/image_rect_color
+
+rosrun google_goggles train_images.py --clear-first -t training/test2_no_ketchup/ -v validation_no_ketchup/ --dont-validate-training-images --train-all --name test2_no_ketchup --round-dir
+
+test_saver() {
+  SAVE_DIR=$(rospack find google_goggles)/data/images/testing
+  rosrun google_goggles take_images.py -d $SAVE_DIR -o $1_$2 --single && echo "getting point cloud" && rostopic echo -n 1 /cloud > $SAVE_DIR/$1/$1_$2_detected_object.txt && { { echo "waiting for object pose" && rostopic echo -n 1 /object_pose > $SAVE_DIR/$1/$1_$2_object_pose.txt && echo "got object pose"; } & { echo "waiting for grasp pose" && rostopic echo -n 1 /grasp_pose > $SAVE_DIR/$1/$1_$2_grasp_pose.txt && echo "got grasp pose"; } &  }
+}

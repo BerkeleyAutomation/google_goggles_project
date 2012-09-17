@@ -39,7 +39,7 @@ class image_saver:
 		self.test = options.test
 		self.total_tests = 0
 		
-		self.save_file_dir = os.path.join(options.dir,options.object)
+		self.save_file_dir = os.path.join(options.dir,options.object.split('_')[0])
 		try:
 			os.makedirs(self.save_file_dir)
 		except os.error, e:

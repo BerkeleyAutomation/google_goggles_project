@@ -41,6 +41,8 @@ from pr2_controllers_msgs.msg import *
 from std_srvs.srv import Empty
 import actionlib
 
+from threading import Thread
+
 TIME_FORMAT = "%Y-%m-%d-T%H-%M-%S"
 
 RESULTS_STRING_FMT = '{test_type} {success} {input_label} {output_label} {stamp} {filename}'
@@ -52,7 +54,6 @@ def format_results(test_type,success,input_label,output_label,stamp,filename):
 		output_label=output_label,
 		stamp=time.strftime(TIME_FORMAT,stamp),
 		filename=filename)
-
 
 
 if __name__ == "__main__":
@@ -67,6 +68,10 @@ if __name__ == "__main__":
 	parser.add_option("--fake-align",dest='fake_alignment',action="store_true")
 	
 	parser.add_option("--no-images",action="store_true",default=False)
+	
+	parser.set_defaults(window=False)
+	parser.add_option("--window",dest='window',action="store_true")
+	parser.add_option("--no-window",dest='window',action="store_false")
 	
 	parser.add_option("--no-google",action="store_true",default=False)
 	parser.add_option("--fake-google")
@@ -85,7 +90,8 @@ if __name__ == "__main__":
 	parser.add_option("--max",type='int',default=0)
 	parser.add_option("--single",action="store_const",dest="max",const=1)
 	
-	parser.add_option("-i","--interval",type="float",default=4.5)
+	parser.add_option("-i","--interval",type="float",default=30)
+	parser.add_option("--image-interval",type="float",default=4.5)
 	
 	parser.add_option('-s',"--size",dest="crop_size",help="image crop size WxH");
 	
@@ -95,6 +101,9 @@ if __name__ == "__main__":
 	parser.add_option("-g","--grasp",action="store_true",default=False, help="Run grasping");
 	
 	(options, args) = parser.parse_args(rospy.myargv())
+	
+	if not options.image_interval:
+		options.image_interval = options.interval
 	
 	if options.save_results_to:
 		options.save_results = True
@@ -177,18 +186,24 @@ if __name__ == "__main__":
 		
 		if options.grasp:
 			rospy.loginfo('starting pr2')
-			pr2 = PR2()
+			pr2 = PR2.create()
+			pr2.grips.open()
+			pr2.arms.goto_posture('side')
+			#gui = RaveGUI(pr2.env)
+			#gui.start()
 		
 		if not options.no_images:
 			rospy.loginfo("Starting ImageTester")
 			image_tester = ImageTester(options,image_topic='/prosilica/image_rect_color',image_label_topic='object_name')
 		
 		rospy.loginfo("Starting ObjectLoader")
-		object_loader = ObjectLoader(object_name_topic='object_name',grasp_poses_topic='grasp_poses',fake_alignment=options.fake_alignment)
+		object_loader = ObjectLoader(object_name_topic='object_name',grasp_poses_topic='grasp_poses',grasper=options.grasp,fake_alignment=options.fake_alignment,interval=options.interval)
 		
 		if options.grasp:
-			rospy.loginfo("Starting Grasper")
-			grasper = Grasper(pr2,grasp_pose_array_topic='grasp_poses',table_height_topic='table_height')
+			pass
+			#rospy.loginfo("Starting Grasper")
+			#grasper = Grasper(pr2,grasp_pose_array_topic='grasp_poses',table_height_topic='table_height')
+			#grasper = Grasper(pr2,grasp_pose_array_topic='grasp_poses',table_height_topic='table_height',object_point_cloud_topic='aligned_object')
 		
 		rospy.loginfo('ready')
 		rospy.spin()

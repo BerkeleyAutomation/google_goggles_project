@@ -129,7 +129,7 @@ void TabletopTracker::updateClusters() {
 	
 	clusters = mergeOverlappingCircles(clusters);
 	
-	size_t min_ind = -1;
+	int min_ind = -1;
 	float min_x_dist = 100000;
 	for (size_t i=0;i<clusters.size();i++) {
 		Eigen::Vector4f centroid;
@@ -144,7 +144,7 @@ void TabletopTracker::updateClusters() {
 		}
 		if (dist < min_x_dist) {
 			min_x_dist = dist;
-			min_ind = i;
+			min_ind = (int)i;
 		}
 		float minHeight = 10000;
 		float maxHeight = -10000;
@@ -160,6 +160,8 @@ void TabletopTracker::updateClusters() {
 		//std::cout << "cluster centroid: (" << centroid[0] << "," << centroid[1] << "," << centroid[2] << ") " << dist << std::endl;
 	}
 
+	if (min_ind == -1 || clusters.empty()) { return; }
+	
 	latest_cluster = clusters[min_ind];
 	if (!combined_cluster || mode == TRACK) {
 		combined_cluster = latest_cluster;

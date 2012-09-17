@@ -24,10 +24,17 @@ from pcl.msg import PolygonMesh
 import tf
 import tf.transformations as tft
 
+from grasper import Grasper
+
 class ObjectLoader:
-	def __init__(self,object_name_topic='object_name',grasp_poses_topic='grasp_poses',fake_alignment=True):
+	def __init__(self,object_name_topic='object_name',grasp_poses_topic='grasp_poses',grasper=False,fake_alignment=True,interval=None):
 		self.ref_cloud_pub = rospy.Publisher('ref_cloud',PointCloud2,latch=True)
 		self.ref_data_pub = rospy.Publisher('ref_data',ObjectReferenceData,latch=True)
+		
+		self.interval = None
+		if interval:
+			self.interval = rospy.Duration(interval)
+		self.last_call_time = rospy.Time(0)
 		
 		self.cloud_to_mesh_srv_name = 'create_mesh'
 		self.cloud_to_mesh_srv = rospy.ServiceProxy(self.cloud_to_mesh_srv_name, google_goggles_srvs.srv.CreateMesh)  
@@ -44,9 +51,16 @@ class ObjectLoader:
 		self.grasp_poses_topic = grasp_poses_topic
 		self.grasp_poses_pub = rospy.Publisher(self.grasp_poses_topic,PoseArray,latch=True)
 		
+		self.grasper = None
+		if grasper:
+			self.grasper = Grasper(table_height_topic='table_height')
+		
 		self.object_name_sub = rospy.Subscriber(object_name_topic,String,self.object_name_callback)
 	
 	def object_name_callback(self,msg):
+		if self.interval and (self.last_call_time is None or rospy.Time.now() - self.last_call_time < self.interval):
+			return
+		self.last_call_time = None
 		name = msg.data
 		rospy.loginfo('loading object %s', name)
 		ref_pc_dir = roslib.packages.get_pkg_subdir('google_goggles','data/points/ref')
@@ -90,6 +104,7 @@ class ObjectLoader:
 				ref_object = self.cloud_to_mesh_srv(ref_cloud)
 			except rospy.ServiceException, e:
 				rospy.logerr("Create mesh service error: %s",str(e))
+				self.last_call_time = rospy.Time.now()
 				return False
 		
 		try:
@@ -101,10 +116,17 @@ class ObjectLoader:
 				object_pose_header = Header()
 				object_pose_header.frame_id = ref_object.cloud.header.frame_id
 				object_pose_header.stamp = rospy.Time.now()
+				aligned_object = ref_object
 			else:
-				align_object_response = self.align_object_srv(ref_object)
+				try:
+					rospy.wait_for_service(self.align_object_srv_name)
+					align_object_response = self.align_object_srv(ref_object)
+				except Exception, e:
+					print 'aligning failed',e
+					return True
 				object_pose_msg = align_object_response.pose
-				#print "Aligned object pose: ", object_pose_msg
+				rospy.loginfo("Aligned object pose: %s", object_pose_msg)
+				aligned_object = align_object_response.aligned_object
 				object_pose_header = object_pose_msg.header
 				object_pose_q = numpy.array([ \
 						object_pose_msg.pose.orientation.x,
@@ -120,7 +142,8 @@ class ObjectLoader:
 				object_pose = trans * rot
 		except rospy.ServiceException, e:
 			rospy.logerr("Align Object service error: %s",str(e))
-			return False
+			self.last_call_time = rospy.Time.now()
+			return True
 			
 		#apply tf grasp
 		grasps = []
@@ -158,7 +181,24 @@ class ObjectLoader:
 			grasp_pose_msg.position.y = p[1]
 			grasp_pose_msg.position.z = p[2]
 			grasp_pose_array.poses.append(grasp_pose_msg)
-			
+		
+		rospy.loginfo('Object loading complete')
+		
 		rospy.loginfo('Publishing grasps')
 		self.grasp_poses_pub.publish(grasp_pose_array)
-		rospy.loginfo('Object loading complete')
+		
+		if self.grasper:
+			rospy.loginfo('Calling grasper')
+			self.grasper.object_mesh = aligned_object
+			self.grasper.grasp_pose_array(grasp_pose_array)
+			
+			rospy.sleep(5)
+			self.grasper.pr2.grips.open()
+			self.grasper.pr2.arms.goto_posture('side')
+		
+		rospy.loginfo('Done. %d seconds until ready again',self.interval.to_sec())
+		
+		
+		self.last_call_time = rospy.Time.now()
+		
+		return True

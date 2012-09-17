@@ -36,12 +36,13 @@ def format_results(test_type,success,input_label,output_label,stamp,filename):
 class ImageTester:
 	def __init__(self,options,image_topic='camera',image_label_topic='image_label'):
 		self.options = options
-		cv.NamedWindow("cropped", 1)
+		if self.options.window:
+			cv.NamedWindow("cropped", 1)
 		self.bridge = CvBridge()
 		
 		self.image = None
 		self.cropped_image = None
-		self.interval = rospy.Duration(options.interval)
+		self.interval = rospy.Duration(options.image_interval)
 		self.last_test_time = None
 		self.crop_size = None
 		self.crop_offset = (0,0)
@@ -104,8 +105,9 @@ class ImageTester:
 				self.cropped_image = self.image[self.crop_offset[0]:self.crop_offset[0]+self.crop_size[0],self.crop_offset[1]:self.crop_offset[1]+self.crop_size[1]]
 		
 		#cv.ShowImage("raw", self.image)
-		cv.ShowImage("cropped", self.cropped_image)
-		cv.WaitKey(3)
+		if self.options.window:
+			cv.ShowImage("cropped", self.cropped_image)
+			cv.WaitKey(3)
 		
 		if process:
 			stamp = time.localtime(data.header.stamp.to_time())
@@ -113,7 +115,7 @@ class ImageTester:
 			#filename = self.name + "_" + stamp_string
 			tmp = tempfile.NamedTemporaryFile(dir='/tmp')
 			filename = tmp.name + ".jpg"
-			rospy.loginfo("got image of size ({0},{1}) with stamp {2}".format(self.image.cols,self.image.rows,time_str))
+			rospy.logdebug("got image of size ({0},{1}) with stamp {2}".format(self.image.cols,self.image.rows,time_str))
 			if not self.test:
 				cv.SaveImage(filename,self.cropped_image)
 				save_file_name = ''
@@ -127,7 +129,7 @@ class ImageTester:
 				
 				results_string = None
 				if self.options.learn_image and not self.options.no_google:
-					print "learning..."
+					print "learning...",
 					if self.options.fake_google:
 						res = {'status':'SUCCESS', 'image_label':self.options.learn_image}
 					else:
@@ -140,12 +142,12 @@ class ImageTester:
 						print 'failure :('
 						results_string = format_results('LEARN','FAILURE',self.options.learn_image,'~',stamp,save_file_name)
 				elif not self.options.no_google:
-					print "testing..."
+					print "testing...",
 					if self.options.fake_google:
 						res = {'status':'SUCCESS', 'image_label':self.options.fake_google}
 					else:
 						res = GoogleGoggles.match(filename)
-					print res
+					#print res
 					res_label = res['image_label']
 					if res_label:
 						self.label_total[res_label] += 1
@@ -179,9 +181,10 @@ class ImageTester:
 						else:
 							print 'failure :('
 							results_string = format_results('TEST','FAILURE','~','~',stamp,save_file_name)
-					print 'successes: {0}/{1}'.format(self.total_successes,self.total_tests)
-					for label in self.label_total.keys():
-						print "  {0}: {1}".format(label,self.label_total[label])
+					if False:
+						print 'successes: {0}/{1}'.format(self.total_successes,self.total_tests)
+						for label in self.label_total.keys():
+							print "  {0}: {1}".format(label,self.label_total[label])
 				if results_string and self.results_file:
 					results_file.write(results_string + '\n')
 					
