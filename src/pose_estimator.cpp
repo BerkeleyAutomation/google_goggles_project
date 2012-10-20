@@ -310,14 +310,13 @@ CloudPtr align(const sensor_msgs::PointCloud2& pc,geometry_msgs::PoseStamped& po
 		Quaternionf best_rotation;
 		
 		
-		int num_transforms = 1000;
 		int pub_tf_num = -1;
 		
 		float angle;
 		Vector3f axis;
 		std::vector<Quaternionf> transforms;
 		
-		int num_angles = num_transforms/9;
+		int num_angles = 360/5;
 		for (int i=0;i<num_angles;i++) {
 			angle = i * 2.0 * M_PI / num_angles;
 			axis = Vector3f(0,0,1);
@@ -325,16 +324,18 @@ CloudPtr align(const sensor_msgs::PointCloud2& pc,geometry_msgs::PoseStamped& po
 			
 			transforms.push_back(rot);
 			
-			for (int j=-1;j<=1;j+=2) {
-				for (int k=-1;k<=1;k+=2) {
+			for (int j=-1;j<=1;j+=1) {
+				for (int k=-1;k<=1;k+=1) {
 					axis = Vector3f(j,k,0);
 					Quaternionf rot2(AngleAxisf(M_PI_2,axis.normalized()));
 					transforms.push_back(rot2 * rot);
 				}
 			}
+			std::cout << "tf sz " << transforms.size() << std::endl;
 		}
 		
 		/*
+		int num_transforms = 1000;
 		transforms.push_back(Quaternionf(AngleAxisf(0,Vector3f(0,0,1))));
 		for (int i=1;i<=num_transforms;i++) {
 			angle = rand() * 2.0 * M_PI / RAND_MAX;
@@ -375,7 +376,7 @@ CloudPtr align(const sensor_msgs::PointCloud2& pc,geometry_msgs::PoseStamped& po
 			
 			Translation3f shift(shift_x,shift_y,shift_z);
 			
-			Affine3f guess = shift * rot;
+			Affine3f guess = shift * ref_to_centered.inverse() * rot * ref_to_centered;
 			
 			//std::cout << "angle: " << 180 * angle/M_PI << " shift: (" << shift.x() << ", " << shift.y() << ", " << shift.z() << ")" << std::endl;
 			
@@ -391,6 +392,7 @@ CloudPtr align(const sensor_msgs::PointCloud2& pc,geometry_msgs::PoseStamped& po
 				ref_cloud_msg.header.stamp = ros::Time::now();
 				ref_cloud_msg.header.frame_id = tracker->map_frame;
 				ref_cloud_pub.publish(ref_cloud_msg);
+				ros::Duration(1).sleep();
 			}
 			
 			bool remove_occluded = PEConfig.remove_occluded;
@@ -457,7 +459,7 @@ CloudPtr align(const sensor_msgs::PointCloud2& pc,geometry_msgs::PoseStamped& po
 			
 			if (false && icp.hasConverged()) {
 				sensor_msgs::PointCloud2 this_aligned_cloud_msg;
-				pcl::toROSMsg(*nonoccluded_aligned_cloud,this_aligned_cloud_msg);
+				pcl::toROSMsg(*output_cloud,this_aligned_cloud_msg);
 				this_aligned_cloud_msg.header.stamp = ros::Time::now();
 				this_aligned_cloud_msg.header.frame_id = tracker->map_frame;
 				ROS_INFO("Publishing this aligned cloud %d",(int)this_aligned_cloud_msg.width);
