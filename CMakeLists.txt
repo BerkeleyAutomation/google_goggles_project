@@ -70,7 +70,8 @@ target_link_libraries(google_goggles_point_cloud ${OpenCV_LIBS} boost_program_op
 rosbuild_add_executable(pose_estimator src/pose_estimator.cpp)
 target_link_libraries(pose_estimator google_goggles_point_cloud)
 
+include_directories(/usr/include/vtk-5.8)
 rosbuild_add_executable(point_cloud_to_mesh src/point_cloud_to_mesh.cpp)
-target_link_libraries(point_cloud_to_mesh google_goggles_point_cloud)
+target_link_libraries(point_cloud_to_mesh google_goggles_point_cloud libvtkCommon.so)
 
 #rosbuild_add_executable(image_file_publisher src/image_file_publisher.cpp)

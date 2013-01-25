@@ -124,9 +124,9 @@ if __name__ == "__main__":
 	if options.test_files:
 		if not args:
 			parser.error("No files given for testing!")
-		testfiles = args
+		testfiles = args[1:]
 	elif options.learn:
-		learnfiles = learnfiles + args
+		learnfiles = learnfiles + args[1:]
 	
 	if learnfiles:
 		results_file = None
@@ -163,15 +163,21 @@ if __name__ == "__main__":
 			label = (testfile.split("/")[-1]).split("_")[0]
 			print "testing file {0} ({1}/{2})".format(testfile,idx+1,len(testfiles))
 			res = GoogleGoggles.match(testfile)
-			success = res['image_label'] == label
+			print '\n\n', res, '\n\n'
+			result_label = ''
+			if res.has_key('image_label'):
+				result_label = res['image_label']
+			elif res.has_key('matches') and res['matches']:
+				result_label = res['matches'][0]['image_label']
+			success = res['status'] == 'SUCCESS' and result_label == label
 			if success:
 				print 'success!'
 				total_successes += 1
 				label_successes[label] = label_successes[label] + 1
-				results_string = format_results('TEST','SUCCESS',label,res['image_label'],time.localtime(),testfile)
+				results_string = format_results('TEST','SUCCESS',label,result_label,time.localtime(),testfile)
 			else:
 				print 'failure :('
-				results_string = format_results('TEST','FAILURE',label,res['image_label'],time.localtime(),testfile)
+				results_string = format_results('TEST','FAILURE',label,result_label,time.localtime(),testfile)
 			label_total[label] = label_total[label] + 1
 			total_tests += 1
 			if idx != len(testfiles)-1: time.sleep(5)
@@ -201,9 +207,9 @@ if __name__ == "__main__":
 		
 		if options.grasp:
 			pass
-			#rospy.loginfo("Starting Grasper")
+			rospy.loginfo("Starting Grasper")
 			#grasper = Grasper(pr2,grasp_pose_array_topic='grasp_poses',table_height_topic='table_height')
-			#grasper = Grasper(pr2,grasp_pose_array_topic='grasp_poses',table_height_topic='table_height',object_point_cloud_topic='aligned_object')
+			grasper = Grasper(pr2,grasp_pose_array_topic='grasp_poses',table_height_topic='table_height',object_point_cloud_topic='aligned_object')
 		
 		rospy.loginfo('ready')
 		rospy.spin()

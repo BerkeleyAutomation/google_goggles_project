@@ -8,7 +8,7 @@ class GoogleGoggles(object):
     MATCH = "objreco/match"
     
     LAST_CALL_TIME=None
-    MIN_CALL_INTERVAL=0.5
+    MIN_CALL_INTERVAL=0.2
     @staticmethod
     def throttle():
         now = time.mktime(time.localtime())
@@ -35,7 +35,10 @@ class GoogleGoggles(object):
 
     @staticmethod
     def parseResponse(res):
-       return json.loads(res.replace("status","'status'").replace("image_label","'image_label'").replace("match_score","'match_score'").replace("image_id","'image_id'").replace("'",'"'))
+        #res = res.replace("status","'status'").replace("image_label","'image_label'").replace("match_score","'match_score'").replace("image_id","'image_id'")
+        res = res.replace("'",'"')
+        #print res
+        return json.loads(res)
 
     @staticmethod
     def learn(img_path, label):

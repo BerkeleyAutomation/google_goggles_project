@@ -139,7 +139,7 @@ bool point_cloud_to_mesh(pcl::PointCloud<pcl::PointXYZ>::Ptr cloud_in,pcl::Polyg
 	// Reconstruct
 	ROS_INFO("Preprocessing point cloud");
 	//mls.process (*cloud_with_normals);
-	mls.reconstruct(*mls_cloud);
+	//mls.reconstruct(*mls_cloud);
 	
 	*cloud = *mls_cloud;
 	

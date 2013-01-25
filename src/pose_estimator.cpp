@@ -24,6 +24,7 @@
 #include <pcl/features/pfh.h>
 #include <pcl/features/fpfh.h>
 
+#include <LinearMath/btTransform.h>
 #include <tf/transform_listener.h>
 #include <tf_conversions/tf_eigen.h>
 
@@ -110,6 +111,16 @@ float PoseEstimatorConfiguration::ransac_threshold = 0.05;
 Eigen::Affine3f toEigenTransform(const btTransform& transform) {
 	btVector3 transBullet = transform.getOrigin();
 	btQuaternion quatBullet = transform.getRotation();
+	Eigen::Translation3f transEig;
+	transEig = Eigen::Translation3f(transBullet.x(), transBullet.y(), transBullet.z());
+	Eigen::Matrix3f rotEig = Eigen::Quaternionf(quatBullet.w(),quatBullet.x(),quatBullet.y(),quatBullet.z()).toRotationMatrix();
+	Eigen::Affine3f out = transEig*rotEig;
+	return out;
+}
+
+Eigen::Affine3f toEigenTransform(const tf::Transform& transform) {
+	tf::Vector3 transBullet = transform.getOrigin();
+	tf::Quaternion quatBullet = transform.getRotation();
 	Eigen::Translation3f transEig;
 	transEig = Eigen::Translation3f(transBullet.x(), transBullet.y(), transBullet.z());
 	Eigen::Matrix3f rotEig = Eigen::Quaternionf(quatBullet.w(),quatBullet.x(),quatBullet.y(),quatBullet.z()).toRotationMatrix();
@@ -270,7 +281,7 @@ CloudPtr align(const sensor_msgs::PointCloud2& pc,geometry_msgs::PoseStamped& po
 	
 	tf::StampedTransform stamped_transform;
 	listener->lookupTransform("/camera_rgb_optical_frame", pc.header.frame_id, ros::Time(0), stamped_transform);
-	Affine3f kinect_tf = toEigenTransform(stamped_transform.asBt());
+	Affine3f kinect_tf = toEigenTransform(stamped_transform);
 	
 	Vector3f camera_pt = kinect_tf.translation();
 	

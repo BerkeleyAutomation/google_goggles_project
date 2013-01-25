@@ -30,7 +30,7 @@ class GoogleGoggles(object):
 	LAST_CALL_TIME=None
 	MIN_CALL_INTERVAL=0.5
 	@staticmethod
-	def throttle():
+	def _throttle():
 		now = time.time()
 		if not GoogleGoggles.LAST_CALL_TIME:
 			GoogleGoggles.LAST_CALL_TIME = now
@@ -58,11 +58,14 @@ class GoogleGoggles(object):
 
 	@staticmethod
 	def parseResponse(res):
-	   return json.loads(res.replace("status","'status'").replace("image_label","'image_label'").replace("match_score","'match_score'").replace("image_id","'image_id'").replace("'",'"'))
+		#res = res.replace("status","'status'").replace("image_label","'image_label'").replace("match_score","'match_score'").replace("image_id","'image_id'")
+		res = res.replace("'",'"')
+		#print res
+		return json.loads(res)
 
 	@staticmethod
 	def learn(img_path, label):
-		GoogleGoggles.throttle()
+		GoogleGoggles._throttle()
 		tic = time.time()
 		url = GoogleGoggles._prepare_url( \
 				GoogleGoggles.SERVER + GoogleGoggles.LEARN,
@@ -76,7 +79,7 @@ class GoogleGoggles(object):
 
 	@staticmethod
 	def match(img_path):
-		GoogleGoggles.throttle()
+		GoogleGoggles._throttle()
 		tic = time.time()
 		url = GoogleGoggles._prepare_url( \
 				GoogleGoggles.SERVER + GoogleGoggles.MATCH,
@@ -444,6 +447,7 @@ def main(argv):
 			print 'Testing images...'
 			match_responses.append([])
 			data_this_round = numpy.zeros((len(validation_images),1),dtype=int)
+			confidence_this_round = numpy.zeros((len(validation_images),1),dtype=float)
 			
 			if options.dont_validate_training_images:
 				num_images_to_validate = len(validation_images) - len(learned_images_to_this_round)
@@ -499,6 +503,7 @@ def main(argv):
 					
 				
 				data_this_round[idx,0] = int(success)
+				confidence_this_round[idx,0] = int(success)
 			
 			num_successes_this_round = numpy.sum(data_this_round[:,0])
 			total_this_round = len(validation_images)
@@ -507,8 +512,10 @@ def main(argv):
 			
 			if data_table is None:
 				data_table = data_this_round
+				confidence_table = confidence_this_round
 			else:
 				data_table = numpy.hstack((data_table,data_this_round))
+				confidence_table = numpy.hstack((confidence_table,confidence_this_round))
 			
 			f.write('Test results:\n')
 			f.write('Summary: %d/%d\n' % (numpy.sum(data_table[:,round_num-1].flatten()),len(validation_images)))
@@ -559,6 +566,7 @@ def main(argv):
 			
 			f.write('Raw data:\n')
 			f.write(str(data_table[:,round_num-1].flatten().tolist())+'\n')
+			f.write(str(confidence_table[:,round_num-1].flatten().tolist())+'\n')
 			
 			round_end_time = time.time()
 			round_time = (round_end_time - round_start_time)
@@ -593,6 +601,7 @@ def main(argv):
 		pkld['images_not_learned'] = images_not_learned
 	pkld['num_rounds'] = num_rounds
 	pkld['data_table'] = data_table
+	pkld['confidence_table'] = confidence_table
 	
 	if not options.validate_only:
 		pkld['learn_responses'] = learn_responses

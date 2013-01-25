@@ -292,10 +292,12 @@ ColorCloudPtr maskCloud(const ColorCloudPtr in, const VectorXb& mask) {
 }
 
 void labelCloud(ColorCloudPtr in, const cv::Mat& labels) {
+	std::cerr << "labelCloud() doesn't work no more" << std::endl;
 	ColorCloudPtr out(new ColorCloud());
 	MatrixXi uv = xyz2uv(toEigenMatrix(in));
-	for (size_t i=0; i < in->size(); i++)
-		in->points[i]._unused = labels.at<uint8_t>(uv(i,0), uv(i,1));
+	for (size_t i=0; i < in->size(); i++) {
+		//in->points[i]._unused = labels.at<uint8_t>(uv(i,0), uv(i,1));
+	}
 }
 
 #include <opencv2/highgui/highgui.hpp>
