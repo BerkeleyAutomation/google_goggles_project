@@ -1,0 +1,6 @@
+<launch>
+  <node name="graspit" pkg="graspit" type="graspit" args="plugin,libdbase_grasp_planning" output="screen">
+    <env name="GRASPIT" value="$(find graspit)/graspit_source"/>
+    <env name="GRASPIT_PLUGIN_DIR" value="$(find dbase_grasp_planner)/lib"/>
+  </node>
+</launch>

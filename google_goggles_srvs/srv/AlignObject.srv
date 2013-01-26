@@ -1,0 +1,4 @@
+pcl/PolygonMesh object
+---
+pcl/PolygonMesh aligned_object
+geometry_msgs/PoseStamped pose

@@ -1,0 +1,8 @@
+pcl/PolygonMesh object
+object_manipulation_msgs/Grasp[] grasps
+#float32 angle_var
+#float32 x_var
+#float32 y_var
+---
+object_manipulation_msgs/Grasp[] grasps
+float32[] qualities

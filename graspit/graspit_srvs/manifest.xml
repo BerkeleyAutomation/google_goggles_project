@@ -1,0 +1,19 @@
+<package>
+  <description brief="graspit_srvs">
+
+     graspit_interface_msgs
+
+  </description>
+  <author>Peter Brook</author>
+  <license>BSD</license>
+  <review status="unreviewed" notes=""/>
+  <url>http://ros.org/wiki/graspit_srvs</url>
+  <depend package="rospy"/>
+  <depend package="roscpp"/>
+  <depend package="sensor_msgs"/>
+  <depend package="geometry_msgs"/>
+  <depend package="object_manipulation_msgs"/>
+  <depend package="pcl"/>
+</package>
+
+

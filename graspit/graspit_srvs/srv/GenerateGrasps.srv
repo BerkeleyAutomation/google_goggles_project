@@ -1,0 +1,6 @@
+pcl/PolygonMesh object
+geometry_msgs/Pose object_pose
+uint32 num_grasps
+---
+object_manipulation_msgs/Grasp[] grasps
+geometry_msgs/PoseArray grasp_poses

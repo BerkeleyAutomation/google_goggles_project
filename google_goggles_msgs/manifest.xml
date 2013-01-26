@@ -1,0 +1,16 @@
+<package>
+  <description brief="google_goggles_msgs">
+
+     google_goggles_msgs
+
+  </description>
+  <author>Ben Kehoe</author>
+  <license>BSD</license>
+  <review status="unreviewed" notes=""/>
+  <url>http://ros.org/wiki/google_goggles_msgs</url>
+  <depend package="geometry_msgs"/>
+  <depend package="pcl"/>
+  <depend package="object_manipulation_msgs"/>
+</package>
+
+

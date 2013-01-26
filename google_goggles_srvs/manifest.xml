@@ -1,0 +1,17 @@
+<package>
+  <description brief="google_goggles_srvs">
+
+     google_goggles_srvs
+
+  </description>
+  <author>Ben Kehoe</author>
+  <license>BSD</license>
+  <review status="unreviewed" notes=""/>
+  <url>http://ros.org/wiki/google_goggles_srvs</url>
+  <depend package="geometry_msgs"/>
+  <depend package="sensor_msgs"/>
+  <depend package="pcl"/>
+
+</package>
+
+
