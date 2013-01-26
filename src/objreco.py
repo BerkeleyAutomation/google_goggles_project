@@ -8,7 +8,7 @@ class GoogleGoggles(object):
     MATCH = "objreco/match"
     
     LAST_CALL_TIME=None
-    MIN_CALL_INTERVAL=0.5
+    MIN_CALL_INTERVAL=0.2
     @staticmethod
     def throttle():
         now = time.mktime(time.localtime())
