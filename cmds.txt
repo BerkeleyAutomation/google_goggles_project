@@ -11,7 +11,7 @@ rosrun_in electric google_goggles contact_cloud.py --ros --fake-alignment --fake
 
 rosrun rosx image_file_publisher -r 1 $(rospack find google_goggles)/data/images/unorganized/mustard/mustard_upright_wood_bright-diffuse_low_2012-09-09-T15-55-07.jpg /prosilica/image_rect_color
 
-rosrun google_goggles train_images.py --clear-first -t training/test2_no_ketchup/ -v validation_no_ketchup/ --dont-validate-training-images --train-all --name test2_no_ketchup --round-dir
+rosrun google_goggles train_images.py --clear-first -t training/test2_no_ketchup/ --no-validation --train-all --name train_for_test
 
 test_saver() {
   SAVE_DIR=$(rospack find google_goggles)/data/images/testing

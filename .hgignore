@@ -6,11 +6,14 @@ syntax: glob
 bin/
 build/
 lib/
+catkin*/
+devel/
+gtest/
 data*/
 src/backup_*/
 scripts/backup_*/
-Makefile
 msg_gen
 srv_gen
+wiki/.zim/
 
 .*project

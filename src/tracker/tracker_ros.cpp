@@ -5,6 +5,8 @@
 #include <sensor_msgs/PointCloud2.h>
 #include <geometry_msgs/PoseStamped.h>
 #include <pcl/io/pcd_io.h>
+#include <LinearMath/btTransform.h>
+#include <tf_conversions/tf_eigen.h>
 //#include <misc_msgs/TrackedCylinders.h>
 using namespace std;
 using namespace Eigen;
@@ -15,6 +17,16 @@ using namespace Eigen;
 Eigen::Affine3f toEigenTransform(const btTransform& transform) {
 	btVector3 transBullet = transform.getOrigin();
 	btQuaternion quatBullet = transform.getRotation();
+	Eigen::Translation3f transEig;
+	transEig = Eigen::Translation3f(transBullet.x(), transBullet.y(), transBullet.z());
+	Eigen::Matrix3f rotEig = Eigen::Quaternionf(quatBullet.w(),quatBullet.x(),quatBullet.y(),quatBullet.z()).toRotationMatrix();
+	Eigen::Affine3f out = transEig*rotEig;
+	return out;
+}
+
+Eigen::Affine3f toEigenTransform(const tf::Transform& transform) {
+	tf::Vector3 transBullet = transform.getOrigin();
+	tf::Quaternion quatBullet = transform.getRotation();
 	Eigen::Translation3f transEig;
 	transEig = Eigen::Translation3f(transBullet.x(), transBullet.y(), transBullet.z());
 	Eigen::Matrix3f rotEig = Eigen::Quaternionf(quatBullet.w(),quatBullet.x(),quatBullet.y(),quatBullet.z()).toRotationMatrix();
@@ -66,9 +78,9 @@ void TabletopTrackerROS::updateTransform() {
 	//listener.lookupTransform("/base_footprint", "/openni_rgb_optical_frame", ros::Time(0), stamped_transform);
 	//listener.lookupTransform(map_frame, "/openni_rgb_optical_frame", ros::Time(0), stamped_transform);
 	listener.lookupTransform(map_frame, "/camera_rgb_optical_frame", ros::Time(0), stamped_transform);
-	map_transform = toEigenTransform(stamped_transform.asBt());
+	map_transform = toEigenTransform(stamped_transform);
 	listener.lookupTransform(base_frame, map_frame, ros::Time(0), stamped_transform);
-	map_to_base_transform = toEigenTransform(stamped_transform.asBt());
+	map_to_base_transform = toEigenTransform(stamped_transform);
 	
 }
 

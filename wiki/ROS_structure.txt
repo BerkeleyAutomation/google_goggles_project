@@ -1,0 +1,63 @@
+Content-Type: text/x-zim-wiki
+Wiki-Format: zim 0.4
+Creation-Date: 2013-01-23T14:20:53-08:00
+
+====== ROS structure ======
+Created Wednesday 23 January 2013
+
+===== contact_cloud.py =====
+
+=== ImageTester (image_tester.py) ===
+* subscribes to image topic
+* publishes object label
+
+=== ObjectLoader (object_loader.py) ===
+* subscribes to object label
+* loads bag in ''data/points/ref''
+	* cloud and/or mesh
+	* grasps
+* if bag only has cloud, calls cloud to mesh service to get object
+* calls alignment service
+	* if fake alignment, publishes ref object as aligned object
+* publishes grasps
+* if grasping enabled, waits 5 seconds, resets arms
+
+=== Grasper (grasper.py) ===
+* subscribes to:
+	* table height
+	* grasp/grasp array
+	* cloud and/or mesh
+	* object pose (opt)
+* Grasp array:
+	* Tests each grasp individually
+	* If none successful, shifts table down, tries again
+* Grasp:
+	* wait for mesh (if cloud, uses cloud-to-mesh service)
+	* add mesh to [[OpenRAVE]]
+	* checks IK for poses:
+		* pregrasp
+		* grasp
+		* lift
+	* if valid:
+		* publishes poses
+		* executes
+
+===== pose_estimator =====
+* subscribes to object reference data
+* services:
+	* align object (mesh)
+	* align cloud
+* alignment of reference cloud:
+	* get tf to center ref cloud on centroid
+	* gets ref convex hull
+	* gets latest sensor cloud
+	* for each of 1000 random rotations:
+		* gets approx alignment of cloud:
+			* rotates ref cloud (rotate centered, tf back to original)
+			* align x/y center with  center of sensor cloud
+			* align bottoms
+		* optional: remove occluded
+		* aligns
+			* input is ref cloud
+			* target is sensor cloud
+			* guess is approx alignment

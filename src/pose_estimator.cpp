@@ -24,6 +24,7 @@
 #include <pcl/features/pfh.h>
 #include <pcl/features/fpfh.h>
 
+#include <LinearMath/btTransform.h>
 #include <tf/transform_listener.h>
 #include <tf_conversions/tf_eigen.h>
 
@@ -110,6 +111,16 @@ float PoseEstimatorConfiguration::ransac_threshold = 0.05;
 Eigen::Affine3f toEigenTransform(const btTransform& transform) {
 	btVector3 transBullet = transform.getOrigin();
 	btQuaternion quatBullet = transform.getRotation();
+	Eigen::Translation3f transEig;
+	transEig = Eigen::Translation3f(transBullet.x(), transBullet.y(), transBullet.z());
+	Eigen::Matrix3f rotEig = Eigen::Quaternionf(quatBullet.w(),quatBullet.x(),quatBullet.y(),quatBullet.z()).toRotationMatrix();
+	Eigen::Affine3f out = transEig*rotEig;
+	return out;
+}
+
+Eigen::Affine3f toEigenTransform(const tf::Transform& transform) {
+	tf::Vector3 transBullet = transform.getOrigin();
+	tf::Quaternion quatBullet = transform.getRotation();
 	Eigen::Translation3f transEig;
 	transEig = Eigen::Translation3f(transBullet.x(), transBullet.y(), transBullet.z());
 	Eigen::Matrix3f rotEig = Eigen::Quaternionf(quatBullet.w(),quatBullet.x(),quatBullet.y(),quatBullet.z()).toRotationMatrix();
@@ -269,8 +280,10 @@ CloudPtr align(const sensor_msgs::PointCloud2& pc,geometry_msgs::PoseStamped& po
 	ros::Time align_start_time = ros::Time::now();
 	
 	tf::StampedTransform stamped_transform;
+	ROS_INFO("Looking up tf");
 	listener->lookupTransform("/camera_rgb_optical_frame", pc.header.frame_id, ros::Time(0), stamped_transform);
-	Affine3f kinect_tf = toEigenTransform(stamped_transform.asBt());
+	ROS_INFO("Done");
+	Affine3f kinect_tf = toEigenTransform(stamped_transform);
 	
 	Vector3f camera_pt = kinect_tf.translation();
 	
@@ -310,14 +323,13 @@ CloudPtr align(const sensor_msgs::PointCloud2& pc,geometry_msgs::PoseStamped& po
 		Quaternionf best_rotation;
 		
 		
-		int num_transforms = 1000;
 		int pub_tf_num = -1;
 		
 		float angle;
 		Vector3f axis;
 		std::vector<Quaternionf> transforms;
 		
-		int num_angles = num_transforms/9;
+		int num_angles = 360/5;
 		for (int i=0;i<num_angles;i++) {
 			angle = i * 2.0 * M_PI / num_angles;
 			axis = Vector3f(0,0,1);
@@ -325,16 +337,18 @@ CloudPtr align(const sensor_msgs::PointCloud2& pc,geometry_msgs::PoseStamped& po
 			
 			transforms.push_back(rot);
 			
-			for (int j=-1;j<=1;j+=2) {
-				for (int k=-1;k<=1;k+=2) {
+			for (int j=-1;j<=1;j+=1) {
+				for (int k=-1;k<=1;k+=1) {
 					axis = Vector3f(j,k,0);
 					Quaternionf rot2(AngleAxisf(M_PI_2,axis.normalized()));
 					transforms.push_back(rot2 * rot);
 				}
 			}
+			std::cout << "tf sz " << transforms.size() << std::endl;
 		}
 		
 		/*
+		int num_transforms = 1000;
 		transforms.push_back(Quaternionf(AngleAxisf(0,Vector3f(0,0,1))));
 		for (int i=1;i<=num_transforms;i++) {
 			angle = rand() * 2.0 * M_PI / RAND_MAX;
@@ -375,7 +389,7 @@ CloudPtr align(const sensor_msgs::PointCloud2& pc,geometry_msgs::PoseStamped& po
 			
 			Translation3f shift(shift_x,shift_y,shift_z);
 			
-			Affine3f guess = shift * rot;
+			Affine3f guess = shift * ref_to_centered.inverse() * rot * ref_to_centered;
 			
 			//std::cout << "angle: " << 180 * angle/M_PI << " shift: (" << shift.x() << ", " << shift.y() << ", " << shift.z() << ")" << std::endl;
 			
@@ -391,6 +405,7 @@ CloudPtr align(const sensor_msgs::PointCloud2& pc,geometry_msgs::PoseStamped& po
 				ref_cloud_msg.header.stamp = ros::Time::now();
 				ref_cloud_msg.header.frame_id = tracker->map_frame;
 				ref_cloud_pub.publish(ref_cloud_msg);
+				ros::Duration(1).sleep();
 			}
 			
 			bool remove_occluded = PEConfig.remove_occluded;
@@ -457,7 +472,7 @@ CloudPtr align(const sensor_msgs::PointCloud2& pc,geometry_msgs::PoseStamped& po
 			
 			if (false && icp.hasConverged()) {
 				sensor_msgs::PointCloud2 this_aligned_cloud_msg;
-				pcl::toROSMsg(*nonoccluded_aligned_cloud,this_aligned_cloud_msg);
+				pcl::toROSMsg(*output_cloud,this_aligned_cloud_msg);
 				this_aligned_cloud_msg.header.stamp = ros::Time::now();
 				this_aligned_cloud_msg.header.frame_id = tracker->map_frame;
 				ROS_INFO("Publishing this aligned cloud %d",(int)this_aligned_cloud_msg.width);
@@ -497,7 +512,7 @@ CloudPtr align(const sensor_msgs::PointCloud2& pc,geometry_msgs::PoseStamped& po
 	tfd.matrix() = best_tf.matrix().cast<double>();
 
 	tf::Transform ros_tf;
-	tf::TransformEigenToTF(tfd,ros_tf);
+	tf::transformEigenToTF(tfd,ros_tf);
 
 	geometry_msgs::PoseStamped pose;
 	pose.header.stamp = ros::Time::now();
@@ -543,6 +558,7 @@ bool serviceCallbackCloud(google_goggles_srvs::AlignCloud::Request& request, goo
 }
 
 void callback(const google_goggles_msgs::ObjectReferenceData& msg) {
+	ROS_INFO("Received object reference data");
 	geometry_msgs::PoseStamped pose;
 	align(msg.object.cloud,pose);
 }
@@ -589,14 +605,20 @@ int main(int argc, char* argv[]) {
 
 	ros::Duration(1).sleep();
 
+	ros::Time last_pub = ros::Time(0);
+	bool first_msg = false;
 	while (ros::ok()) {
 		for (int i=0; i < 10; i++) { ros::spinOnce(); }
-		if (tracker->hasPendingMessage) {
+		ros::Duration max_pub_interval = ros::Duration(1);
+		ros::Time now = ros::Time::now();
+		first_msg |= tracker->hasPendingMessage;
+		if (tracker->hasPendingMessage || (first_msg && now-last_pub > max_pub_interval)) {
 			//ROS_INFO("tracker has pending message. updating");
 			try {
 				tracker->updateAll();
 				tracker->publish();
 				tracker->hasPendingMessage = false;
+				last_pub = now;
 			} catch (std::runtime_error err) {
 				ROS_ERROR_STREAM("error while updating tracker: " <<err.what());
 				ros::Duration(.1).sleep();

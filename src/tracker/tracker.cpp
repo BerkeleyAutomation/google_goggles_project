@@ -11,6 +11,8 @@
 #include <math.h>
 #include <pcl/io/pcd_io.h>
 
+#include <LinearMath/btTransform.h>
+
 using namespace std;
 using namespace Eigen;
 

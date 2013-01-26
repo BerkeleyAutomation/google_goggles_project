@@ -20,11 +20,18 @@ class GoogleGoggles(object):
 	MATCH = "objreco/match"
 	CLEAR = "objreco/clear"
 	
+	NUM_LEARN_CALLS=0
+	AVG_LEARN_CALL_TIME=0
+	
+	NUM_MATCH_CALLS=0
+	AVG_MATCH_CALL_TIME=0
+	
+	
 	LAST_CALL_TIME=None
 	MIN_CALL_INTERVAL=0.5
 	@staticmethod
-	def throttle():
-		now = time.mktime(time.localtime())
+	def _throttle():
+		now = time.time()
 		if not GoogleGoggles.LAST_CALL_TIME:
 			GoogleGoggles.LAST_CALL_TIME = now
 		next_call = (GoogleGoggles.LAST_CALL_TIME + GoogleGoggles.MIN_CALL_INTERVAL)
@@ -51,21 +58,29 @@ class GoogleGoggles(object):
 
 	@staticmethod
 	def parseResponse(res):
-	   return json.loads(res.replace("status","'status'").replace("image_label","'image_label'").replace("match_score","'match_score'").replace("image_id","'image_id'").replace("'",'"'))
+		#res = res.replace("status","'status'").replace("image_label","'image_label'").replace("match_score","'match_score'").replace("image_id","'image_id'")
+		res = res.replace("'",'"')
+		#print res
+		return json.loads(res)
 
 	@staticmethod
 	def learn(img_path, label):
-		GoogleGoggles.throttle()
+		GoogleGoggles._throttle()
+		tic = time.time()
 		url = GoogleGoggles._prepare_url( \
 				GoogleGoggles.SERVER + GoogleGoggles.LEARN,
 				{"label": label, "serverid": 1})
 		request = GoogleGoggles._prepare_request(url, img_path)
 		res = urllib2.urlopen(request).read().strip()
+		toc = time.time()
+		GoogleGoggles.AVG_LEARN_CALL_TIME = ((toc-tic) + GoogleGoggles.NUM_LEARN_CALLS * GoogleGoggles.AVG_LEARN_CALL_TIME) / (GoogleGoggles.NUM_LEARN_CALLS + 1)
+		GoogleGoggles.NUM_LEARN_CALLS += 1
 		return GoogleGoggles.parseResponse(res)
 
 	@staticmethod
 	def match(img_path):
-		GoogleGoggles.throttle()
+		GoogleGoggles._throttle()
+		tic = time.time()
 		url = GoogleGoggles._prepare_url( \
 				GoogleGoggles.SERVER + GoogleGoggles.MATCH,
 				{"serverid": 1})
@@ -73,6 +88,9 @@ class GoogleGoggles(object):
 		#print "requesting..."
 		#print request.header_items()
 		res = urllib2.urlopen(request).read().strip()
+		toc = time.time()
+		GoogleGoggles.AVG_MATCH_CALL_TIME = ((toc-tic) + GoogleGoggles.NUM_MATCH_CALLS * GoogleGoggles.AVG_MATCH_CALL_TIME) / (GoogleGoggles.NUM_MATCH_CALLS + 1)
+		GoogleGoggles.NUM_MATCH_CALLS += 1
 		return GoogleGoggles.parseResponse(res)
 	
 	@staticmethod
@@ -91,6 +109,7 @@ def main(argv):
 	parser.add_option('--test',action='store_true',default=False)
 	
 	parser.add_option('--name')
+	parser.add_option('--save-dir',default='')
 	
 	parser.add_option('-d','--dir',dest='validation_dir')
 	parser.add_option('-v','--validation-dir',default='.')
@@ -111,6 +130,7 @@ def main(argv):
 	parser.add_option('--train-all',action='store_true',default=False)
 	
 	parser.add_option('--dont-validate-training-images',action='store_true',default=False)
+	parser.add_option('--remove-from-validation-dir')
 	
 	parser.add_option('--clear',action='store_true',default=False)
 	parser.add_option('--clear-first',action='store_true',default=False)
@@ -158,6 +178,9 @@ def main(argv):
 		image_dirs = [options.validation_dir]
 	
 	image_dirs = image_dirs + options.training_dir
+	
+	if not options.train_only and options.remove_from_validation_dir:
+		image_dirs = [options.remove_from_validation_dir] + image_dirs
 	
 	images = []
 	[images.append([]) for image_dir in image_dirs]
@@ -221,8 +244,14 @@ def main(argv):
 	if options.train_only:
 		validation_images = []
 	else:
+		remove = []
+		if options.remove_from_validation_dir:
+			remove = images[0]
+			del images[0]
 		validation_images = images[0]
 		del images[0]
+		remove_names = [os.path.basename(img[0]) for img in remove]
+		validation_images = [img for img in validation_images if os.path.basename(img[0]) not in remove_names]
 	
 	training_images = images
 	
@@ -245,7 +274,7 @@ def main(argv):
 	round_num = 0
 	
 	if options.random:
-		random_seed = time.mktime(time.localtime())
+		random_seed = time.time()
 	elif options.seed:
 		random_seed = options.seed
 	else:
@@ -253,7 +282,7 @@ def main(argv):
 	random_seed = str(random_seed)
 	random.seed(random_seed)
 	
-	start_time = time.localtime()
+	start_time = time.time()
 	
 	
 	filename_base = 'results_'
@@ -261,21 +290,22 @@ def main(argv):
 	if options.name:
 		filename_base = filename_base + options.name + '_'
 	
-	filename_base = filename_base + time.strftime(TIME_FORMAT,start_time)
+	filename_base = filename_base + time.strftime(TIME_FORMAT,time.localtime(start_time))
 	if options.test:
 		filename_base = 'test_' + filename_base
 	
-	filename = filename_base + '.txt'
+	filename = os.path.join(options.save_dir,filename_base + '.txt')
 	
 	f = open(filename,'w')
 	
-	pickle_filename = filename_base + '.pkl'
+	pickle_filename = os.path.join(options.save_dir,filename_base + '.pkl')
 	pkld = {}
 	
 	#pkl.dump('start_time'); pkl.dump(start_time)
 	#pkl.dump('root_dir'); pkl.dump(os.path.abspath(root_dir))
 	#pkl.dump('random_seed'); pkl.dump(random_seed)
 	
+	pkld['cmd'] = sys.argv
 	pkld['start_time'] = start_time
 	#pkld['root_dir'] = os.path.abspath(root_dir)
 	if not options.validate_only:
@@ -284,6 +314,8 @@ def main(argv):
 	pkld['validation_dir'] = options.validation_dir
 	pkld['validation_dir_abs'] = os.path.abspath(options.validation_dir)
 	pkld['random_seed'] = random_seed
+	
+	f.write('Command: %s' % str(sys.argv))
 	
 	if not options.validate_only:
 		if len(training_images) == 1:
@@ -321,17 +353,18 @@ def main(argv):
 			else:
 				print "Round #%d" % round_num
 				f.write('Round %d:\n' % (round_num))
-			round_start_time = time.mktime(time.localtime())
+			round_start_time = time.time()
 			
 			this_round_false_detects = []
 			
 			if not options.validate_only:
 				print 'Learning images...'
 				learn_responses.append([])
+				images_for_this_round = []
 				if len(training_images) == 1:
-					images_for_this_round = images_not_learned
+					images_for_this_round[:] = images_not_learned
 				else:
-					images_for_this_round = training_images[round_num-1]
+					images_for_this_round[:] = training_images[round_num-1]
 				images_learned_this_round = []
 				
 				if options.train_all:
@@ -351,9 +384,9 @@ def main(argv):
 						if not object_images: continue
 						
 						imgs_to_learn += random.sample(object_images,min(options.num_samples,len(object_images)))
-					
-				for img_to_learn in imgs_to_learn:
-					print "Learning",img_to_learn[1:],
+				
+				for img_idx,img_to_learn in enumerate(imgs_to_learn):
+					print "Learning %d/%d" % (img_idx+1,len(imgs_to_learn)),img_to_learn[1:],
 					if len(training_images) == 1:
 						t_dir = options.training_dir[0]
 					else:
@@ -414,6 +447,7 @@ def main(argv):
 			print 'Testing images...'
 			match_responses.append([])
 			data_this_round = numpy.zeros((len(validation_images),1),dtype=int)
+			confidence_this_round = numpy.zeros((len(validation_images),1),dtype=float)
 			
 			if options.dont_validate_training_images:
 				num_images_to_validate = len(validation_images) - len(learned_images_to_this_round)
@@ -469,6 +503,7 @@ def main(argv):
 					
 				
 				data_this_round[idx,0] = int(success)
+				confidence_this_round[idx,0] = int(success)
 			
 			num_successes_this_round = numpy.sum(data_this_round[:,0])
 			total_this_round = len(validation_images)
@@ -477,8 +512,10 @@ def main(argv):
 			
 			if data_table is None:
 				data_table = data_this_round
+				confidence_table = confidence_this_round
 			else:
 				data_table = numpy.hstack((data_table,data_this_round))
+				confidence_table = numpy.hstack((confidence_table,confidence_this_round))
 			
 			f.write('Test results:\n')
 			f.write('Summary: %d/%d\n' % (numpy.sum(data_table[:,round_num-1].flatten()),len(validation_images)))
@@ -529,8 +566,9 @@ def main(argv):
 			
 			f.write('Raw data:\n')
 			f.write(str(data_table[:,round_num-1].flatten().tolist())+'\n')
+			f.write(str(confidence_table[:,round_num-1].flatten().tolist())+'\n')
 			
-			round_end_time = time.mktime(time.localtime())
+			round_end_time = time.time()
 			round_time = (round_end_time - round_start_time)
 			print 'Round complete, took %f seconds' % round_time
 			f.write('Round time: %fs\n' % round_time)
@@ -547,8 +585,8 @@ def main(argv):
 	num_rounds = len(images_learned)
 	all_learned_images = [item for sublist in images_learned for item in sublist]
 	
-	end_time = time.mktime(time.localtime())
-	total_time = end_time - time.mktime(start_time)
+	end_time = time.time()
+	total_time = end_time - start_time
 	total_minutes = math.floor(total_time/60)
 	total_seconds_into_minute = total_time - 60 * total_minutes
 	
@@ -563,6 +601,7 @@ def main(argv):
 		pkld['images_not_learned'] = images_not_learned
 	pkld['num_rounds'] = num_rounds
 	pkld['data_table'] = data_table
+	pkld['confidence_table'] = confidence_table
 	
 	if not options.validate_only:
 		pkld['learn_responses'] = learn_responses
@@ -580,6 +619,16 @@ def main(argv):
 	
 	print 'Total time: %d minutes, %f seconds' % (total_minutes,total_seconds_into_minute)
 	f.write('Total time: %d minutes, %f seconds\n' % (total_minutes,total_seconds_into_minute))
+	
+	print 'Total learn calling time: %f seconds' % (GoogleGoggles.NUM_LEARN_CALLS * GoogleGoggles.AVG_LEARN_CALL_TIME)
+	f.write('Total learn calling time: %f seconds' % (GoogleGoggles.NUM_LEARN_CALLS * GoogleGoggles.AVG_LEARN_CALL_TIME))
+	print 'Average learn calling time: %f seconds' % GoogleGoggles.AVG_LEARN_CALL_TIME
+	f.write('Average learn calling time: %f seconds' % GoogleGoggles.AVG_LEARN_CALL_TIME)
+	
+	print 'Total match calling time: %f seconds' % (GoogleGoggles.NUM_MATCH_CALLS * GoogleGoggles.AVG_MATCH_CALL_TIME)
+	f.write('Total match calling time: %f seconds' % (GoogleGoggles.NUM_MATCH_CALLS * GoogleGoggles.AVG_MATCH_CALL_TIME))
+	print 'Average match calling time: %f seconds' % GoogleGoggles.AVG_MATCH_CALL_TIME
+	f.write('Average match calling time: %f seconds' % GoogleGoggles.AVG_MATCH_CALL_TIME)
 	
 	if not options.validate_only:
 		print "Learned %d/%d images in %d steps" % (len(all_learned_images),num_training_images,num_rounds)
