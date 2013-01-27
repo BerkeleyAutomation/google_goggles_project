@@ -23,6 +23,8 @@
 #include <pcl/keypoints/narf_keypoint.h>
 #include <pcl/features/pfh.h>
 #include <pcl/features/fpfh.h>
+#include <pcl/registration/correspondence_estimation.h>
+
 
 #include <LinearMath/btTransform.h>
 #include <tf/transform_listener.h>
@@ -60,6 +62,7 @@ ros::Subscriber ref_cloud_sub;
 ros::Publisher ref_cloud_pub;
 
 ros::Publisher aligned_cloud_pub;
+ros::Publisher aligned_unocc_cloud_pub;
 
 ros::Publisher pose_pub;
 ros::Publisher grasp_pub;
@@ -95,10 +98,12 @@ struct PoseEstimatorConfiguration : public Config {
 	static bool remove_occluded;
 	static float max_correspondence;
 	static float ransac_threshold;
+	static bool new_fitness;
 	PoseEstimatorConfiguration() : Config() {
 		params.push_back(new Parameter<bool>("remove-occluded", &remove_occluded, ""));
 		params.push_back(new Parameter<float>("max-correspondence", &max_correspondence, ""));
 		params.push_back(new Parameter<float>("ransac-threshold", &ransac_threshold, ""));
+		params.push_back(new Parameter<bool>("new-fitness",&new_fitness,""));
 	}
 };
 
@@ -106,6 +111,7 @@ static PoseEstimatorConfiguration PEConfig = PoseEstimatorConfiguration();
 bool PoseEstimatorConfiguration::remove_occluded = false;
 float PoseEstimatorConfiguration::max_correspondence = 0.01;
 float PoseEstimatorConfiguration::ransac_threshold = 0.05;
+bool PoseEstimatorConfiguration::new_fitness = false;
 
 
 Eigen::Affine3f toEigenTransform(const btTransform& transform) {
@@ -245,7 +251,7 @@ pcl::PointIndicesPtr getUnoccluded(CloudPtr ref_cloud,CloudPtr ref_cloud_guess,V
 		}
 	}
 	
-	std::cout << "keeping " << keep_indices->indices.size() << "/" << ref_cloud->points.size() << std::endl;
+	std::cout << "keeping " << keep_indices->indices.size() << "/" << ref_cloud_guess->points.size() << std::endl;
 	
 	return keep_indices;
 	
@@ -339,8 +345,12 @@ CloudPtr align(const sensor_msgs::PointCloud2& pc,geometry_msgs::PoseStamped& po
 			
 			for (int j=-1;j<=1;j+=1) {
 				for (int k=-1;k<=1;k+=1) {
+					if (j == 0 && k == 0) {
+						continue;
+					}
 					axis = Vector3f(j,k,0);
 					Quaternionf rot2(AngleAxisf(M_PI_2,axis.normalized()));
+					Quaternionf total_rot = rot2 * rot;
 					transforms.push_back(rot2 * rot);
 				}
 			}
@@ -359,7 +369,8 @@ CloudPtr align(const sensor_msgs::PointCloud2& pc,geometry_msgs::PoseStamped& po
 		}
 		*/
 		
-		float first_score;
+		float first_score = -1;
+		bool published_nan = false;
 		for (size_t i=0;i<transforms.size() && !ros::isShuttingDown();i++) {
 			std::cout << "testing " << i+1 << "/" << transforms.size() << "..." << std::endl;
 			
@@ -449,16 +460,44 @@ CloudPtr align(const sensor_msgs::PointCloud2& pc,geometry_msgs::PoseStamped& po
 			
 			*nonoccluded_aligned_cloud = *output_cloud;
 			
-			double fitness = icp.getFitnessScore();
-			//std::cout << "has converged:" << icp.hasConverged() << " score: " << fitness << std::endl;
-			if (i==0) {
-				first_score = fitness;
-			}
-			
 			Affine3f tf;
 			tf.matrix() = icp.getFinalTransformation();
-			
+
 			pcl::transformPointCloud(*ref_cloud,*aligned_cloud,tf);
+
+			double fitness;
+
+			if (PEConfig.new_fitness) {
+				ROS_INFO("Finding correspondences");
+				pcl::registration::CorrespondenceEstimation<Point,Point> correspondence;
+
+				CloudPtr correspondence_input_cloud;
+
+				pcl::PointIndicesPtr inds = getUnoccluded(ref_cloud,aligned_cloud,camera_pt,ref_cloud_hull,ref_cloud_hull_polygons);
+				correspondence_input_cloud = CloudPtr(new Cloud());
+				pcl::copyPointCloud(*aligned_cloud,*inds,*correspondence_input_cloud);
+
+				correspondence.setInputTarget(correspondence_input_cloud);
+
+				correspondence.setInputCloud(latest_cloud);
+
+				pcl::Correspondences correspondences;
+				correspondence.determineCorrespondences(correspondences);
+				//correspondence.determineReciprocalCorrespondences(correspondences);
+
+				fitness = 0;
+				BOOST_FOREACH(pcl::Correspondence corr,correspondences) {
+					fitness += corr.distance * corr.distance;
+				}
+				ROS_INFO("Fitness: %f",fitness);
+			} else {
+				fitness = icp.getFitnessScore();
+			}
+
+			//std::cout << "has converged:" << icp.hasConverged() << " score: " << fitness << std::endl;
+			if (first_score == -1) {
+				first_score = fitness;
+			}
 			
 			if (icp.hasConverged() && fitness < best_score) {
 				got_best = true;
@@ -506,6 +545,17 @@ CloudPtr align(const sensor_msgs::PointCloud2& pc,geometry_msgs::PoseStamped& po
 	ROS_INFO("Publishing aligned cloud");
 	aligned_cloud_pub.publish(aligned_cloud_msg);
 	
+	if (PEConfig.new_fitness) {
+		CloudPtr aligned_unocc_cloud;
+
+		pcl::PointIndicesPtr inds = getUnoccluded(ref_cloud,aligned_cloud,camera_pt,ref_cloud_hull,ref_cloud_hull_polygons);
+		aligned_unocc_cloud = CloudPtr(new Cloud());
+		pcl::copyPointCloud(*aligned_cloud,*inds,*aligned_unocc_cloud);
+		sensor_msgs::PointCloud2 aligned_unocc_cloud_msg;
+		pcl::toROSMsg(*aligned_unocc_cloud,aligned_unocc_cloud_msg);
+		aligned_unocc_cloud_pub.publish(aligned_unocc_cloud_msg);
+	}
+
 	/**************** Publishing **********************/
 
 	Affine3d tfd;
@@ -571,7 +621,7 @@ int main(int argc, char* argv[]) {
 	parser.addGroup(PEConfig);
 	parser.read(argc, argv);
 	
-	std::cout << "ro " << PEConfig.remove_occluded << " md " << PEConfig.max_correspondence << " rt " << PEConfig.ransac_threshold << std::endl;
+	std::cout << "ro " << PEConfig.remove_occluded << " md " << PEConfig.max_correspondence << " rt " << PEConfig.ransac_threshold <<  " nf " << PEConfig.new_fitness << std::endl;
 	
 	bool latch_aligned_cloud = false;
 	for (int i=1;i<argc;i++) {
@@ -590,6 +640,9 @@ int main(int argc, char* argv[]) {
 	
 	ref_cloud_pub     = nh.advertise<sensor_msgs::PointCloud2>("ref_object",1,true);
 	aligned_cloud_pub = nh.advertise<sensor_msgs::PointCloud2>("aligned_object",1,latch_aligned_cloud);
+	if (PEConfig.new_fitness) {
+		aligned_unocc_cloud_pub = nh.advertise<sensor_msgs::PointCloud2>("aligned_object/unoccluded",1,latch_aligned_cloud);
+	}
 	
 	pose_pub = nh.advertise<geometry_msgs::PoseStamped>("object_pose",1,false);
 	//grasp_pub = nh.advertise<geometry_msgs::PoseStamped>("grasp_pose",1,true);

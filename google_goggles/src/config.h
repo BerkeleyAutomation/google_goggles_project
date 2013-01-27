@@ -76,7 +76,7 @@ struct Config {
 	
 	#define addOption(field, type, ...) addParam<type>(benk::Config::underscore_to_hyphen(BENK_STRINGIFY(field)),&(this->field), ##__VA_ARGS__)
 	#define addOptions(field, other_names, type, ...) addParam<type>(benk::Config::underscore_to_hyphen(BENK_STRINGIFY(field)),other_names, &(this->field), ##__VA_ARGS__)
-	#define addOptionWithHelp(field, help, ...) addParamWithHelp<type>(benk::Config::underscore_to_hyphen(BENK_STRINGIFY(field)),&(this->field), help, ##__VA_ARGS__)
+	#define addOptionWithHelp(field, type, help, ...) addParamWithHelp<type>(benk::Config::underscore_to_hyphen(BENK_STRINGIFY(field)),&(this->field), help, ##__VA_ARGS__)
 	#define addOptionsWithHelp(field, other_names, type, help, ...) addParamWithHelp<type>(benk::Config::underscore_to_hyphen(BENK_STRINGIFY(field)),other_names, &(this->field), help, ##__VA_ARGS__)
 	
 	template<typename T>
