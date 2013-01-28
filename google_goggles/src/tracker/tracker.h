@@ -42,5 +42,7 @@ public:
 	virtual void reset();
 	
 	void write(const std::string& filename);
+
+EIGEN_MAKE_ALIGNED_OPERATOR_NEW
 };
 
