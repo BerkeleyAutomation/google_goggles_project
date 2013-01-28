@@ -25,9 +25,11 @@ msg/_*.py
 msg/__init__.py
 
 .*project
+.settings
 
 google_goggles_msgs/src/google_goggles_msgs/__init__.py
 google_goggles_srvs/src/google_goggles_srvs/__init__.py
 graspit/graspit_srvs/src/graspit_interface_msgs/__init__.py
 graspit/graspit_srvs/src/graspit_srvs/__init__.py
 
+google_goggles/cmake_install.cmake
