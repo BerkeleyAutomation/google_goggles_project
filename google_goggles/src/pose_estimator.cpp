@@ -327,7 +327,7 @@ CloudPtr align(const sensor_msgs::PointCloud2& pc,geometry_msgs::PoseStamped& po
 		
 		float angle;
 		Vector3f axis;
-		std::vector<Quaternionf> transforms;
+		std::vector<Quaternionf,Eigen::aligned_allocator<Eigen::Quaternionf> > transforms;
 		
 		int num_angles = 360/5;
 		for (int i=0;i<num_angles;i++) {
