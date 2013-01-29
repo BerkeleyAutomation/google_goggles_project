@@ -2,7 +2,7 @@
 name=Google Goggles
 version=0.4
 endofline=unix
-profile=
+profile=None
 home=Home
 icon=None
 document_root=~/ros_workspace/google_goggles

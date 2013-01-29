@@ -14,7 +14,7 @@ src/backup_*/
 scripts/backup_*/
 msg_gen
 srv_gen
-wiki/.zim
+doc/.zim
 graspit/graspit_interface/
 graspit/graspit_interface_msgs/
 graspit/graspit/
