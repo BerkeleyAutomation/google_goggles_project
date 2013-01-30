@@ -1,3 +1,4 @@
+
 *~
 *.pyc
 *.pyo
@@ -15,17 +16,32 @@ srv_gen
 doc/.zim
 graspit/graspit_interface/
 graspit/graspit_interface_msgs/
-graspit/graspit/
+#graspit/graspit/
 graspit/cloud_graspit/
 srv/_*.py
 srv/__init__.py
 msg/_*.py
 msg/__init__.py
+.moc/
+.obj/
+*.md5sum
 
 .*project
+.settings
+*.pro.user*
 
 google_goggles_msgs/src/google_goggles_msgs/__init__.py
 google_goggles_srvs/src/google_goggles_srvs/__init__.py
 graspit/graspit_srvs/src/graspit_interface_msgs/__init__.py
 graspit/graspit_srvs/src/graspit_srvs/__init__.py
 
+google_goggles/cmake_install.cmake
+
+graspit/graspit/logfile*
+graspit/graspit/graspit_source/logfile*
+graspit/graspit/Makefile.graspit.svn
+graspit/graspit/Makefile.graspit.tarball
+
+graspit/graspit/graspit_source/models
+
+graspit/graspit/graspit-*.tar.gz
