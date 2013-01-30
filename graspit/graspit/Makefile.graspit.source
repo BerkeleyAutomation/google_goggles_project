@@ -1,0 +1,17 @@
+all: bin/graspit
+
+INITIAL_DIR = build/Graspit
+SOURCE_DIR = graspit_source
+
+PACKAGE_DIR = $(shell rospack find graspit)
+
+bin/graspit:
+	-cd $(SOURCE_DIR) && qmake "EXT_DESTDIR = $(PACKAGE_DIR)/bin" "ADDITIONAL_INCLUDE_DIR=$(PACKAGE_DIR)/include" "ADDITIONAL_LINK_FLAGS=-Wl,-rpath,$(PACKAGE_DIR)/lib " graspit.pro && make
+
+clean:
+	-rm -rf bin/graspit
+	-cd $(SOURCE_DIR) && make clean
+
+wipe: clean
+	-rm -rf $(SOURCE_DIR)
+	-rm -rf $(TARBALL)
