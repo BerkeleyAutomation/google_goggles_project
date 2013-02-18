@@ -80,7 +80,7 @@ if __name__ == '__main__':
 			if msg._type == 'tf/tfMessage' and not options.no_tf:
 				for i in xrange(len(msg.transforms)):
 					msg.transforms[i].header.stamp = now
-			elif hasattr(msg,'header') and not options.tf_only:
+			elif msg._has_header and not options.tf_only:
 				msg.header.stamp = now
 			
 			if not pubs.has_key(topic):

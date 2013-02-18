@@ -75,6 +75,7 @@ if __name__ == "__main__":
 	
 	parser.add_option("--no-google",action="store_true",default=False)
 	parser.add_option("--fake-google")
+	parser.add_option("--force-label")
 	
 	parser.add_option("-t","--test-files", action="store_true",default=False, help="use files")
 	
@@ -99,6 +100,9 @@ if __name__ == "__main__":
 	parser.add_option("-o","--offset",dest="crop_offset")
 	
 	parser.add_option("-g","--grasp",action="store_true",default=False, help="Run grasping");
+	parser.add_option("--select-grasp",type=int);
+	parser.add_option("--select-grasps-after",type=int);
+	parser.add_option("--no-shuffle",action='store_true',default=False);
 	
 	(options, args) = parser.parse_args(rospy.myargv())
 	
@@ -198,21 +202,45 @@ if __name__ == "__main__":
 			#gui = RaveGUI(pr2.env)
 			#gui.start()
 		
-		if not options.no_images:
+		if not options.no_images and not options.force_label:
 			rospy.loginfo("Starting ImageTester")
 			image_tester = ImageTester(options,image_topic='/prosilica/image_rect_color',image_label_topic='object_name')
 		
 		rospy.loginfo("Starting ObjectLoader")
-		object_loader = ObjectLoader(object_name_topic='object_name',grasp_poses_topic='grasp_poses',grasper=options.grasp,fake_alignment=options.fake_alignment,interval=options.interval)
+		object_loader = ObjectLoader(object_name_topic='object_name',grasp_poses_topic='grasp_poses',
+									grasper=options.grasp,
+									fake_alignment=options.fake_alignment,
+									interval=options.interval,
+									grasper_args = {
+												'always_publish_pose': (options.select_grasp is not None),
+												'select_grasp': options.select_grasp,
+												'select_grasps_after': options.select_grasps_after,
+												'shuffle_poses': (options.select_grasp is None and options.select_grasps_after is None) and not options.no_shuffle}
+									)
 		
-		if options.grasp:
+		if options.grasp and False:
 			pass
 			rospy.loginfo("Starting Grasper")
 			#grasper = Grasper(pr2,grasp_pose_array_topic='grasp_poses',table_height_topic='table_height')
-			grasper = Grasper(pr2,grasp_pose_array_topic='grasp_poses',table_height_topic='table_height',object_point_cloud_topic='aligned_object')
+			grasper = Grasper(pr2,
+							grasp_pose_array_topic='grasp_poses',
+							table_height_topic='table_height',
+							object_point_cloud_topic='aligned_object',
+							always_publish_pose=(options.select_grasp is not None),
+							select_grasp=options.select_grasp,
+							select_grasps_after=options.select_grasps_after,
+							shuffle_poses = (options.select_grasp is None and options.select_grasps_after is None) and not options.no_shuffle)
+			
 		
 		rospy.loginfo('ready')
-		rospy.spin()
+		if options.force_label:
+			label_pub = rospy.Publisher(object_loader.object_name_topic,std_msgs.msg.String)
+			rate = rospy.Rate(1)
+			while not rospy.is_shutdown():
+				label_pub.publish(options.force_label)
+				rate.sleep()
+		else:
+			rospy.spin()
 		
 		print "shutting down"
 

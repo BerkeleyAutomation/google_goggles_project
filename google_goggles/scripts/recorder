@@ -1,0 +1,260 @@
+#!/usr/bin/env python
+
+import roslib
+roslib.load_manifest('google_goggles')
+import rospy
+
+from std_msgs.msg import *
+from geometry_msgs.msg import *
+
+import os.path
+import time
+
+import argparse
+
+TIME_FORMAT = "%Y-%m-%d-T%H-%M-%S"
+
+class Recorder(object):
+	def __init__(self,args):
+		self.args = args
+		
+		self.label = None
+		self.label_sub = rospy.Subscriber('object_name',String,self.label_cb)
+		
+		self.aligned_pose = None
+		self.aligned_pose_sub = rospy.Subscriber('object_pose',PoseStamped,self.aligned_pose_cb)
+		
+		self.align_info = None
+		self.align_info_sub = rospy.Subscriber('align_info',String,self.align_info_cb)
+		
+		self.grasp_num = None
+		self.grasp_num_sub = rospy.Subscriber('grasp_num',Int32,self.grasp_num_cb)
+		
+		self.grasp_quality = None
+		self.grasp_quality_sub = rospy.Subscriber('grasp_quality',Float64,self.grasp_quality_cb)
+		
+		self.grasp_pose = None
+		self.grasp_pose_sub = rospy.Subscriber('grasp_pose',PoseStamped,self.grasp_pose_cb)
+		
+		self.success = None
+		self.success_sub = rospy.Subscriber('success',Bool,self.success_cb)
+		
+		self.start_time = time.localtime()
+	
+	def check(self,display=False):
+		ready = self.label is not None and \
+			self.aligned_pose is not None and \
+			self.align_info is not None and \
+			self.grasp_num is not None and \
+			self.grasp_quality is not None and \
+			self.grasp_pose is not None and \
+			self.success is not None
+		if display and ready:
+			print 'Ready!'
+		return ready
+	
+	def whats_missing(self):
+		if self.label is None:
+			print 'Label missing'
+		if self.aligned_pose is None:
+			print 'Aligned pose missing'
+		if self.align_info is None:
+			print 'Align info missing'
+		if self.grasp_num is None:
+			print 'Grasp num missing'
+		if self.grasp_quality is None:
+			print 'Grasp quality missing'
+		if self.grasp_pose is None:
+			print 'Grasp pose missing'
+		if self.success is None:
+			print 'Success missing'
+	
+	def finish(self):
+		if not self.check():
+			self.whats_missing()
+			return
+		getch = _Getch()
+		save = getch.yesno('Save?')
+		if not save:
+			return
+		fname = self.label
+		if self.args.suffix:
+			fname += '_' + self.args.suffix
+		if not self.args.append:
+			fname += '_' + time.strftime(TIME_FORMAT,self.start_time)
+		fname += '.txt'
+		
+		exists = os.path.isfile(fname)
+		
+		f = open(fname,mode='a')
+		
+		if exists and self.args.append:
+			f.write('\n\n---\n\n\n')
+			
+		f.write('Label: ' + self.label + '\n\n')
+		
+		f.write('Start time: %s\n\n' % time.strftime(TIME_FORMAT,self.start_time))
+		
+		get_msg = getch.yesno('Store message?')
+		if get_msg:
+			msg = raw_input('Enter message: ')
+			f.write(msg)
+			f.write('\n\n')
+		
+		write = lambda data: f.write(str(data) + '\n\n')
+		
+		f.write('Align info:\n')
+		write(self.align_info)
+		
+		f.write('Aligned pose:\n')
+		write(self.aligned_pose)
+		
+		f.write('Grasp #')
+		write(self.grasp_num)
+		
+		f.write('Grasp quality: ')
+		write(self.grasp_quality)
+		
+		f.write('Grasp pose:\n')
+		write(self.grasp_pose)
+		
+		f.write('Success? ')
+		write(self.success)
+		
+		print 'saved'
+	
+	def label_cb(self,msg):
+		if self.label is None:
+			print 'Got label %s' % msg.data
+			self.check(True)
+		elif self.label != msg.data:
+			print 'Label changed from %s to %s' % (self.label,msg.data)
+		self.label = msg.data
+	
+	def aligned_pose_cb(self,msg):
+		if self.aligned_pose is None:
+			print 'Got aligned pose'
+			self.check(True)
+		elif self.aligned_pose != msg:
+			print 'Aligned pose changed'
+		self.aligned_pose = msg
+	
+	def align_info_cb(self,msg):
+		if self.align_info is None:
+			print 'Got align info'
+			self.check(True)
+		elif self.align_info != msg.data:
+			print 'Align info changed'
+		self.align_info = msg.data
+	
+	def grasp_num_cb(self,msg):
+		first = self.grasp_num is None
+		if self.grasp_num is None:
+			print 'Got grasp num: %d' % msg.data
+		elif self.grasp_num != msg.data:
+			print 'Grasp num changed from %d to %d' % (self.grasp_num,msg.data)
+		self.grasp_num = msg.data
+		if first:
+			self.check(True)
+	
+	def grasp_quality_cb(self,msg):
+		first = self.grasp_quality is None
+		if self.grasp_quality is None:
+			print 'Got grasp quality: %f' % msg.data
+		elif self.grasp_quality != msg.data:
+			print 'Grasp quality changed from %f to %f' % (self.grasp_quality,msg.data)
+		self.grasp_quality = msg.data
+		if first:
+			self.check(True)
+	
+	def grasp_pose_cb(self,msg):
+		first = self.grasp_pose is None
+		if self.grasp_pose is None:
+			print 'Got grasp pose'
+		elif self.grasp_pose != msg:
+			print 'Grasp pose changed'
+		self.grasp_pose = msg
+		if first:
+			self.check(True)
+	
+	def success_cb(self,msg):
+		first = self.success is None
+		if self.success is None:
+			print 'Got success'
+		elif self.success != msg.data:
+			print 'Success changed!'
+		self.success = msg.data
+		if first:
+			self.check(True)
+
+def main():
+	parser = argparse.ArgumentParser()
+	
+	parser.add_argument('--append',action='store_true',default=False)
+	parser.add_argument('--suffix')
+	
+	a = rospy.myargv()
+	del a[0]
+	
+	args = parser.parse_args(a)
+	
+	rospy.init_node('recorder',anonymous=True)
+	
+	rec = Recorder(args)
+	
+	print 'recording'
+	rospy.spin()
+	
+	rec.finish()
+		
+class _Getch:
+	"""Gets a single character from standard input.  Does not echo to the screen."""
+	@staticmethod
+	def is_ctrl_c(ch):
+		return ord(ch) == 3
+		
+	class _GetchWindows:
+		def __init__(self):
+			import msvcrt
+	
+		def __call__(self):
+			import msvcrt
+			return msvcrt.getch()
+	class _GetchUnix:
+		def __init__(self):
+			import tty, sys
+	
+		def __call__(self):
+			import sys, tty, termios
+			fd = sys.stdin.fileno()
+			old_settings = termios.tcgetattr(fd)
+			try:
+				tty.setraw(sys.stdin.fileno())
+				ch = sys.stdin.read(1)
+			finally:
+				termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
+			return ch
+	
+	def __init__(self):
+		try:
+			self.impl = _Getch._GetchWindows()
+		except ImportError:
+			self.impl = _Getch._GetchUnix()
+
+	def __call__(self,prompt = None,yesno=False):
+		if prompt:
+			import sys
+			print prompt,
+			sys.stdout.flush()
+		ch = self.impl()
+		if prompt:
+			print ''
+		if yesno:
+			return ch.lower() == 'y'
+	
+	def yesno(self,prompt = None):
+		return self(prompt=prompt,yesno=True)
+
+if __name__ == '__main__':
+	main()
+	

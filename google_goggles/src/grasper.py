@@ -11,7 +11,7 @@ from math import *
 import numpy
 import random
 
-from std_msgs.msg import Float32
+from std_msgs.msg import Float32, Float64, Bool, Int32
 from geometry_msgs.msg import *
 from sensor_msgs.msg import *
 import tf
@@ -56,7 +56,11 @@ class Grasper:
 			table_height_topic=None,
 			object_mesh_topic=None,
 			object_point_cloud_topic=None,
-			object_pose_topic=None):
+			object_pose_topic=None,
+			always_publish_pose=False,
+			select_grasp=None,
+			select_grasps_after=None,
+			shuffle_poses=True):
 		self.pr2 = PR2.create()
 		
 		rospy.loginfo("reseting")
@@ -73,7 +77,19 @@ class Grasper:
 		self.pregrasp_pose_pub = rospy.Publisher('pregrasp_pose',PoseStamped,latch=True);
 		self.grasp_pose_pub = rospy.Publisher('grasp_pose',PoseStamped,latch=False);
 		self.lift_pose_pub = rospy.Publisher('lift_pose',PoseStamped,latch=True);
+		self.lift_rot_pose_pub = rospy.Publisher('lift_pose_rot',PoseStamped,latch=True);
 		self.grasp_pose_array_pub = rospy.Publisher('grasp_pose_array',PoseArray,latch=True);
+		
+		self.grasp_num_pub = rospy.Publisher('grasp_num',Int32,latch=False)
+		self.grasp_quality_pub = rospy.Publisher('grasp_quality',Float64,latch=False)
+		self.success_pub = rospy.Publisher('success',Bool,latch=False)
+		
+		self.tracker_pause_pub = rospy.Publisher('tracker_pause',Bool);
+		
+		self.always_publish_pose = always_publish_pose
+		self.select_grasp = select_grasp
+		self.select_grasps_after = select_grasps_after
+		self.shuffle_poses = shuffle_poses
 		
 		self.table_height = table_height
 		self.table_height_topic = table_height_topic
@@ -95,9 +111,7 @@ class Grasper:
 			#print 'subscribing to ', object_point_cloud_topic
 			self.use_object_mesh = True
 			self.cloud_to_mesh_srv_name = 'create_mesh'
-			self.cloud_to_mesh_srv = rospy.ServiceProxy(self.cloud_to_mesh_srv_name, google_goggles_srvs.srv.CreateMesh)
-			rospy.loginfo('Waiting for create mesh service')
-			rospy.wait_for_service(self.cloud_to_mesh_srv_name)
+			self.cloud_to_mesh_srv = None
 			self.object_point_cloud_sub = rospy.Subscriber(object_point_cloud_topic,PointCloud2,self.object_point_cloud_callback)
 		
 		self.object_pose_topic = object_pose_topic
@@ -111,8 +125,31 @@ class Grasper:
 		if grasp_pose_array_topic:
 			self.grasp_pose_array_sub = rospy.Subscriber(grasp_pose_array_topic,PoseArray,self.grasp_pose_array)
 	
-	def grasp_pose_array(self,msg):
-		random.shuffle(msg.poses)
+	def grasp_pose_array(self,msg,qualities = None):
+		grasp_nums = list(xrange(len(msg.poses)))
+		if self.select_grasp is not None:
+			print 'selecting grasp %d' % self.select_grasp
+			msg.poses = [msg.poses[self.select_grasp]]
+			grasp_nums = [grasp_nums[self.select_grasp]]
+			if qualities:
+				qualities = [qualities[self.select_grasp]]
+		elif self.select_grasps_after is not None:
+			print 'selecting grasps after %d' % self.select_grasps_after
+			msg.poses = msg.poses[self.select_grasps_after:]
+			grasp_nums = grasp_nums[self.select_grasps_after:]
+			if qualities:
+				qualities = qualities[self.select_grasps_after:]
+		
+		if self.shuffle_poses:
+			print "shuffling"
+			if qualities:
+				l = zip(msg.poses,qualities,grasp_nums)
+				random.shuffle(l)
+				msg.poses,qualities,grasp_nums = zip(*l)
+			else:
+				l = zip(msg.poses,grasp_nums)
+				random.shuffle(l)
+				msg.poses,grasp_nums = zip(*l)
 		max_shift = -0.05
 		shift_steps = 5
 		result = None
@@ -121,12 +158,23 @@ class Grasper:
 			if shift_step != 0:
 				print 'shifting table down by %f' % (-shift)
 			for idx, pose in enumerate(msg.poses):
+				grasp_num = grasp_nums[idx]
 				pose_stamped = PoseStamped()
 				pose_stamped.header = msg.header
 				pose_stamped.pose = pose
-				print 'Testing pose %d/%d' % (idx+1,len(msg.poses))
-				result = self.grasp_pose(pose_stamped,delete_object_store=False,table_shift=shift)
+				quality = None
+				quality_str = ''
+				if qualities:
+					quality = qualities[idx]
+					quality_str = ' q=%f' % quality
+				print 'Testing pose #%d %d/%d%s' % (grasp_num,idx+1,len(msg.poses),quality_str)
+				result = self.grasp_pose(pose_stamped,delete_object_store=False,table_shift=shift,quality=quality)
 				if result is not None:
+					self.grasp_num_pub.publish(grasp_num)
+					if quality is not None:
+						self.grasp_quality_pub.publish(quality)
+					self.success_pub.publish(result)
+					print pose
 					break
 			else:
 				print 'No grasp was successful :('
@@ -136,7 +184,7 @@ class Grasper:
 		self.object_pose = None
 		return result
 
-	def grasp_pose(self,msg,delete_object_store=True,table_shift=0):
+	def grasp_pose(self,msg,delete_object_store=True,table_shift=0,quality=None):
 		if not self.table_height:
 			rospy.loginfo('waiting for table height...')
 			rospy.wait_for_message(self.table_height_topic,Float32)
@@ -163,6 +211,28 @@ class Grasper:
 		#first_pose = pose * tft.translation_matrix(numpy.array([0,0,0.3]))
 		
 		lift_pose = tft.translation_matrix(numpy.array([0,0,0.3])) * pose
+		
+		lift_pose_rot_only = numpy.mat(numpy.copy(lift_pose))
+		lift_pose_rot_only[0:3,3] = 0
+		
+		lift_pose_x_axis = list((lift_pose_rot_only * numpy.matrix([1,0,0,1]).transpose())[0:3].flat)
+		
+		lift_rot_pose = numpy.mat(tft.quaternion_matrix(tft.quaternion_about_axis(pi, lift_pose_x_axis))) * lift_pose_rot_only
+		lift_rot_pose[0:3,3] = lift_pose[0:3,3]
+		
+		if self.always_publish_pose:
+			msg = PoseStamped()
+			msg.header.stamp = rospy.Time.now()
+			msg.header.frame_id = self.base_frame
+			mq,mp = (tft.quaternion_from_matrix(pose),tft.translation_from_matrix(pose)) 
+			msg.pose.orientation.x = mq[0]
+			msg.pose.orientation.y = mq[1]
+			msg.pose.orientation.z = mq[2]
+			msg.pose.orientation.w = mq[3]
+			msg.pose.position.x = mp[0]
+			msg.pose.position.y = mp[1]
+			msg.pose.position.z = mp[2]
+			self.grasp_pose_pub.publish(msg)
 		
 		for body in self.pr2.env.GetBodies():
 			if body.GetName() == 'table':
@@ -233,6 +303,8 @@ class Grasper:
 		
 		rospy.loginfo("IK valid, proceeding with grasp")
 		
+		self.tracker_pause_pub.publish(True)
+		
 		
 		rospy.loginfo("opening gripper")
 		self.pr2.rgrip.open()
@@ -247,7 +319,8 @@ class Grasper:
 		pub_poses = [ \
 			(self.pregrasp_pose_pub,first_pose), \
 			(self.grasp_pose_pub,pose), \
-			(self.lift_pose_pub,lift_pose)]
+			(self.lift_pose_pub,lift_pose), \
+			(self.lift_rot_pose_pub,lift_rot_pose)]
 		
 		for pub,pose_to_pub in pub_poses:
 			msg = PoseStamped()
@@ -271,8 +344,8 @@ class Grasper:
 			rospy.sleep(10)
 		except IKFail, e:
 			print 'IK failed for first pose:',e
-			self.pr2.rarm.goto_posture('side')
 			self.pr2.rgrip.open()
+			self.pr2.rarm.goto_posture('side')
 			return None
 		
 		#print "second pose:"
@@ -283,8 +356,8 @@ class Grasper:
 			rospy.sleep(5)
 		except IKFail, e:
 			print 'IK failed for second pose:',e
-			self.pr2.rarm.goto_posture('side')
 			self.pr2.rgrip.open()
+			self.pr2.rarm.goto_posture('side')
 			return None
 		
 		rospy.loginfo("closing gripper")
@@ -300,16 +373,26 @@ class Grasper:
 			rospy.sleep(5)
 		except IKFail, e:
 			print 'IK failed for lifting:',e
-			self.pr2.rarm.goto_posture('side')
 			self.pr2.rgrip.open()
+			self.pr2.rarm.goto_posture('side')
+			return None
+		
+		try:
+			rospy.loginfo("rotating")
+			self.pr2.rarm.goto_pose_matrix(numpy.array(lift_rot_pose),self.base_frame,self.tool_frame,filter_options=filteropts)
+			rospy.sleep(10)
+		except IKFail, e:
+			print 'IK failed for lifting:',e
+			self.pr2.rgrip.open()
+			self.pr2.rarm.goto_posture('side')
 			return None
 		
 		jm = self.pr2.get_last_joint_message()
 		g_pos = jm.position[jm.name.index('r_gripper_joint')]
 		if g_pos < 0.005:
 			print 'Failure: gripper is closed!'
-			self.pr2.rarm.goto_posture('side')
 			self.pr2.rgrip.open()
+			self.pr2.rarm.goto_posture('side')
 			return False
 		
 		print 'Success!'
@@ -326,6 +409,10 @@ class Grasper:
 	
 	def object_point_cloud_callback(self,msg):
 		print 'pc cb'
+		if not self.cloud_to_mesh_srv:
+			rospy.loginfo('Waiting for create mesh service')
+			rospy.wait_for_service(self.cloud_to_mesh_srv_name)
+			self.cloud_to_mesh_srv = rospy.ServiceProxy(self.cloud_to_mesh_srv_name, google_goggles_srvs.srv.CreateMesh)
 		response = self.cloud_to_mesh_srv(msg)
 		self.object_mesh_callback(response.mesh)
 		

@@ -18,7 +18,7 @@ from google_goggles_msgs.msg import ObjectReferenceData
 import google_goggles_srvs.srv
 from geometry_msgs.msg import *
 from sensor_msgs.msg import Image, PointCloud2
-from std_msgs.msg import Float32, String, Header
+from std_msgs.msg import Float32, String, Header, Bool
 from cv_bridge import CvBridge, CvBridgeError
 from pcl.msg import PolygonMesh
 import tf
@@ -27,7 +27,7 @@ import tf.transformations as tft
 from grasper import Grasper
 
 class ObjectLoader:
-	def __init__(self,object_name_topic='object_name',grasp_poses_topic='grasp_poses',grasper=False,fake_alignment=True,interval=None):
+	def __init__(self,object_name_topic='object_name',grasp_poses_topic='grasp_poses',grasper=False,fake_alignment=True,interval=None,grasper_args={}):
 		self.ref_cloud_pub = rospy.Publisher('ref_cloud',PointCloud2,latch=True)
 		self.ref_data_pub = rospy.Publisher('ref_data',ObjectReferenceData,latch=True)
 		
@@ -53,13 +53,17 @@ class ObjectLoader:
 		
 		self.grasper = None
 		if grasper:
-			self.grasper = Grasper(table_height_topic='table_height')
+			self.grasper = Grasper(table_height_topic='table_height',**grasper_args)
 		
+		self.object_name_topic = object_name_topic
 		self.object_name_sub = rospy.Subscriber(object_name_topic,String,self.object_name_callback)
+		
+		self.tracker_pause_pub = rospy.Publisher('tracker_pause',Bool);
 	
 	def object_name_callback(self,msg):
 		if self.interval and (self.last_call_time is None or rospy.Time.now() - self.last_call_time < self.interval):
 			return
+		self.tracker_pause_pub.publish(False)
 		self.last_call_time = None
 		name = msg.data
 		rospy.loginfo('loading object %s', name)
@@ -84,7 +88,8 @@ class ObjectLoader:
 				#	rospy.logerr('Bag file has multiple objects!')
 				#	return False
 				ref_object = msg.object
-				ref_grasps += msg.grasps
+				msg_grasps = msg.grasps
+				ref_grasps += msg_grasps
 			elif msg._type == 'pcl/PolygonMesh': #if topic.endswith('object_mesh'):
 				rospy.loginfo('Got mesh on topic %s',topic)
 				#if ref_object:
@@ -166,6 +171,7 @@ class ObjectLoader:
 			grasps.append((grasp_pose,grasp.success_probability))
 		
 		sorted_grasps = [g[0] for g in sorted(grasps,key=lambda g: g[1])]
+		sorted_quality = [g[1] for g in sorted(grasps,key=lambda g: g[1])]
 		
 		grasp_pose_array = PoseArray()
 		grasp_pose_array.header = object_pose_header
@@ -190,11 +196,14 @@ class ObjectLoader:
 		if self.grasper:
 			rospy.loginfo('Calling grasper')
 			self.grasper.object_mesh = aligned_object
-			self.grasper.grasp_pose_array(grasp_pose_array)
+			self.grasper.grasp_pose_array(grasp_pose_array,qualities=sorted_quality)
 			
 			rospy.sleep(5)
 			self.grasper.pr2.grips.open()
 			self.grasper.pr2.arms.goto_posture('side')
+			
+			rospy.sleep(20)
+			self.tracker_pause_pub.publish(False)
 		
 		rospy.loginfo('Done. %d seconds until ready again',self.interval.to_sec())
 		

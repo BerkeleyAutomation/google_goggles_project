@@ -3,6 +3,8 @@
 #include <string>
 #include <tf/transform_listener.h>
 
+#include <std_msgs/Bool.h>
+
 #include "tracker.h"
 
 class TabletopTrackerROS : public TabletopTracker {
@@ -16,6 +18,10 @@ public:
 	ros::Publisher table_height_pub;
 	bool hasPendingMessage;
 	ros::Time latest_stamp;
+
+	bool pause;
+	ros::Subscriber pause_sub;
+	void pause_callback(const std_msgs::Bool& msg);
 
 	TabletopTrackerROS(ros::NodeHandle n,TabletopTracker::Mode mode = TabletopTracker::TRACK);
 	void updateTransform();

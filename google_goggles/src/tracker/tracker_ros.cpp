@@ -34,7 +34,7 @@ Eigen::Affine3f toEigenTransform(const tf::Transform& transform) {
 	return out;
 }
 
-TabletopTrackerROS::TabletopTrackerROS(ros::NodeHandle nh,TabletopTracker::Mode mode) : TabletopTracker(mode),hasPendingMessage(false) {
+TabletopTrackerROS::TabletopTrackerROS(ros::NodeHandle nh,TabletopTracker::Mode mode) : TabletopTracker(mode),hasPendingMessage(false),pause(false) {
 	points_pub = nh.advertise<sensor_msgs::PointCloud2>("points",100);
 	cloud_pub = nh.advertise<sensor_msgs::PointCloud2>("cloud",100);
 	cluster_pub = nh.advertise<sensor_msgs::PointCloud2>("clusters",100);
@@ -43,12 +43,29 @@ TabletopTrackerROS::TabletopTrackerROS(ros::NodeHandle nh,TabletopTracker::Mode 
 	table_height_pub = nh.advertise<std_msgs::Float32>("table_height",1,true);
 	cloud_sub = nh.subscribe("/camera/depth_registered/points",1,&TabletopTrackerROS::callback, this);
 	
+	pause_sub = nh.subscribe("tracker_pause",1,&TabletopTrackerROS::pause_callback,this);
+
 	map_frame = "/base_footprint";
 	base_frame = "/base_footprint";
 }
 
+void TabletopTrackerROS::pause_callback(const std_msgs::Bool& msg) {
+	if (pause != msg.data) {
+		if (msg.data) {
+			ROS_INFO("*** PAUSING ***");
+		} else {
+			ROS_INFO("*** UNPAUSING ***");
+		}
+	}
+	pause = msg.data;
+}
+
 
 void TabletopTrackerROS::callback(const sensor_msgs::PointCloud2& msg) {
+	if (pause) {
+		ROS_INFO_STREAM_THROTTLE(1,"paused");
+		return;
+	}
 	//ROS_INFO("Got msg");
 	ColorCloudPtr cloud(new ColorCloud());
 	bool has_color = false;

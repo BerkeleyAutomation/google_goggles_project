@@ -32,6 +32,7 @@
 
 #include <sensor_msgs/PointCloud2.h>
 #include <geometry_msgs/PoseStamped.h>
+#include <std_msgs/String.h>
 
 #include <Eigen/Core>
 #include <Eigen/Geometry>
@@ -69,6 +70,8 @@ ros::Publisher grasp_pub;
 
 ros::Publisher object_data_pub;
 
+ros::Publisher align_info_pub;
+
 static ros::ServiceClient* testGraspsService = 0;
 static ros::ServiceServer* alignObjectService = 0;
 static ros::ServiceServer* alignCloudService = 0;
@@ -99,11 +102,13 @@ struct PoseEstimatorConfiguration : public Config {
 	static float max_correspondence;
 	static float ransac_threshold;
 	static bool new_fitness;
+	static bool flip_inputs;
 	PoseEstimatorConfiguration() : Config() {
 		params.push_back(new Parameter<bool>("remove-occluded", &remove_occluded, ""));
 		params.push_back(new Parameter<float>("max-correspondence", &max_correspondence, ""));
 		params.push_back(new Parameter<float>("ransac-threshold", &ransac_threshold, ""));
 		params.push_back(new Parameter<bool>("new-fitness",&new_fitness,""));
+		params.push_back(new Parameter<bool>("flip-inputs",&flip_inputs,""));
 	}
 };
 
@@ -112,6 +117,7 @@ bool PoseEstimatorConfiguration::remove_occluded = false;
 float PoseEstimatorConfiguration::max_correspondence = 0.01;
 float PoseEstimatorConfiguration::ransac_threshold = 0.05;
 bool PoseEstimatorConfiguration::new_fitness = false;
+bool PoseEstimatorConfiguration::flip_inputs = false;
 
 
 Eigen::Affine3f toEigenTransform(const btTransform& transform) {
@@ -354,7 +360,7 @@ CloudPtr align(const sensor_msgs::PointCloud2& pc,geometry_msgs::PoseStamped& po
 					transforms.push_back(rot2 * rot);
 				}
 			}
-			std::cout << "tf sz " << transforms.size() << std::endl;
+			//std::cout << "tf sz " << transforms.size() << std::endl;
 		}
 		
 		/*
@@ -372,7 +378,7 @@ CloudPtr align(const sensor_msgs::PointCloud2& pc,geometry_msgs::PoseStamped& po
 		float first_score = -1;
 		bool published_nan = false;
 		for (size_t i=0;i<transforms.size() && !ros::isShuttingDown();i++) {
-			std::cout << "testing " << i+1 << "/" << transforms.size() << "..." << std::endl;
+			//std::cout << "testing " << i+1 << "/" << transforms.size() << "..." << std::endl;
 			
 			Quaternionf rot = transforms[i];
 			
@@ -525,6 +531,13 @@ CloudPtr align(const sensor_msgs::PointCloud2& pc,geometry_msgs::PoseStamped& po
 			return CloudPtr();
 		}
 		
+		std::stringstream ss;
+		ss << "Best: axis (" << best_axis.x() << "," << best_axis.y() << "," << best_axis.z() << ")" << " angle: " << 180 * best_angle/M_PI << " with score: " << best_score;
+
+		std_msgs::String str_msg;
+		str_msg.data = ss.str();
+		align_info_pub.publish(str_msg);
+
 		ROS_INFO_STREAM("Best: axis (" << best_axis.x() << "," << best_axis.y() << "," << best_axis.z() << ")" << " angle: " << 180 * best_angle/M_PI << " with score: " << best_score);
 		ROS_INFO_STREAM("Identity score: " << first_score);
 	}
@@ -649,6 +662,8 @@ int main(int argc, char* argv[]) {
 	
 	object_data_pub = nh.advertise<google_goggles_msgs::ObjectData>("aligned_object_data",1,true);
 	
+	align_info_pub = nh.advertise<std_msgs::String>("align_info",1,true);
+
 	testGraspsService = new ros::ServiceClient(nh.serviceClient<graspit_srvs::TestGrasps>("test_grasps"));
 	
 	alignObjectService = new ros::ServiceServer(nh.advertiseService("align_object", serviceCallbackObject));
