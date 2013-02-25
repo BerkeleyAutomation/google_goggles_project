@@ -26,7 +26,7 @@
 <depend package="household_objects_database_msgs" />
 <depend package="object_manipulation_msgs" />
 <depend package="household_objects_database" />
-<depend package="database_interface" />
+<!--depend package="database_interface" /-->
 <!-- depend package="graspit_dbase_tasks" / -->
 <depend package="roscpp"/>
 
