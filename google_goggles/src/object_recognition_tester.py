@@ -37,7 +37,7 @@ def flat_series(list_of_lists):
 		index = ['EMPTY']
 	return pd.Series(l,index=index)
 
-class ImageTester(object):
+class ObjectRecognitionTester(object):
 	def __init__(self,options,args):
 		self.objects = set()
 		

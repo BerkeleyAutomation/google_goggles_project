@@ -10,9 +10,9 @@ import sys, os, time, tempfile, os.path
 from optparse import OptionParser
 from collections import defaultdict
 
-from objreco import GoogleGoggles
+from google_goggles_connector import GoogleGoggles
 
-from image_tester import ImageTester
+from object_recognition import ObjectRecognition
 
 from object_loader import ObjectLoader
 
@@ -203,8 +203,8 @@ if __name__ == "__main__":
 			#gui.start()
 		
 		if not options.no_images and not options.force_label:
-			rospy.loginfo("Starting ImageTester")
-			image_tester = ImageTester(options,image_topic='/prosilica/image_rect_color',image_label_topic='object_name')
+			rospy.loginfo("Starting ObjectRecognition")
+			image_tester = ObjectRecognition(options,image_topic='/prosilica/image_rect_color',image_label_topic='object_name')
 		
 		rospy.loginfo("Starting ObjectLoader")
 		object_loader = ObjectLoader(object_name_topic='object_name',grasp_poses_topic='grasp_poses',

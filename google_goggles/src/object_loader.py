@@ -8,8 +8,6 @@ import sys, os, time, tempfile, os.path
 from optparse import OptionParser
 from collections import defaultdict
 
-from objreco import GoogleGoggles
-
 from math import *
 import numpy
 
