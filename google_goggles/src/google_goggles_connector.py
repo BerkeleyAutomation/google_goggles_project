@@ -10,18 +10,19 @@ import urllib, urllib2, json
 
 class GoogleGoggles(object):
 
-	SERVER = "http://amp.google.com/"
-	LEARN = "objreco/learn"
-	MATCH = "objreco/match"
-	CLEAR = "objreco/clear"
-	
+	SERVER = "http://amp.google.com/objreco/"
+	IS_ALIVE = "isalive"
+	LEARN = "learn"
+	MATCH = "match"
+	CLEAR = "clear"
+
 	NUM_LEARN_CALLS=0
 	AVG_LEARN_CALL_TIME=0
-	
+
 	NUM_MATCH_CALLS=0
 	AVG_MATCH_CALL_TIME=0
-	
-	
+
+
 	LAST_CALL_TIME=None
 	MIN_CALL_INTERVAL=0.5
 	@staticmethod
@@ -59,6 +60,19 @@ class GoogleGoggles(object):
 		return json.loads(res)
 
 	@staticmethod
+	def isAlive(code=False):
+		url = GoogleGoggles.SERVER + GoogleGoggles.IS_ALIVE
+		request = urllib2.Request(url)
+		try:
+			thecode = urllib2.urlopen(request).getcode()
+		except Exception, e:
+			thecode = e.getcode()
+		if code:
+			return thecode
+		else:
+			return code == 200
+
+	@staticmethod
 	def learn(img_path, label):
 		GoogleGoggles._throttle()
 		tic = time.time()
@@ -87,7 +101,7 @@ class GoogleGoggles(object):
 		GoogleGoggles.AVG_MATCH_CALL_TIME = ((toc-tic) + GoogleGoggles.NUM_MATCH_CALLS * GoogleGoggles.AVG_MATCH_CALL_TIME) / (GoogleGoggles.NUM_MATCH_CALLS + 1)
 		GoogleGoggles.NUM_MATCH_CALLS += 1
 		return GoogleGoggles.parseResponse(res)
-	
+
 	@staticmethod
 	def clear():
 		url = GoogleGoggles._prepare_url( \
@@ -98,4 +112,3 @@ class GoogleGoggles(object):
 		#print request.header_items()
 		res = urllib2.urlopen(request).read().strip()
 		return GoogleGoggles.parseResponse(res)
-  
