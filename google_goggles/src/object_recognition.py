@@ -5,7 +5,7 @@ import sys, os, time, tempfile, os.path
 from optparse import OptionParser
 from collections import defaultdict
 
-from objreco import GoogleGoggles
+from google_goggles_connector import GoogleGoggles
 
 from math import *
 import numpy
@@ -33,7 +33,7 @@ def format_results(test_type,success,input_label,output_label,stamp,filename):
 		stamp=time.strftime(TIME_FORMAT,stamp),
 		filename=filename)
 
-class ImageTester:
+class ObjectRecognition:
 	def __init__(self,options,image_topic='camera',image_label_topic='image_label'):
 		self.options = options
 		if self.options.window:

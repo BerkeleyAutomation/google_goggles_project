@@ -1,0 +1,202 @@
+#!/usr/bin/env python
+
+import roslib
+roslib.load_manifest('tf')
+import rospy
+from rosbag import Bag
+
+from tf.msg import tfMessage
+
+import argparse
+import sys
+
+def main():
+	parser = argparse.ArgumentParser()
+	
+	parser.add_argument('file',nargs='+')
+	
+	parser.add_argument('-I','--topic-include',action='append')
+	parser.add_argument('-X','--topic-exclude',action='append')
+	
+	tf_group = parser.add_mutually_exclusive_group()
+	tf_group.add_argument('--tf','--tf-only',action='store_true',default=False, dest='tf_only', help='Publish only tf')
+	tf_group.add_argument('--no-tf',action='store_true',default=False, help='Publish only non-tf messages')
+	
+	loop_group = parser.add_mutually_exclusive_group()
+	loop_group.add_argument('-l','--loop',action='store_true',default=False, help='Loop continuously')
+	loop_group.add_argument('-n','--num-loops',action='store',type=int,default=1)
+	parser.add_argument('-i','--tf-interval',type=float,default=0.1, help='Minimum interval to publish tf')
+	
+	parser.add_argument('-q','--quiet',action='store_true',default=False)
+	
+	parser.add_argument('--min-loop-time',type=lambda t: rospy.Duration(float(t)),\
+			default=rospy.Duration(0.1),help='Minimum loop time (e.g., for bags with a single message)')
+	
+	argv = rospy.myargv()
+	del argv[0]
+	
+	args = parser.parse_args(argv)
+	
+	if args.topic_include and ('tf' in args.topic_include or '/tf' in args.topic_include):
+		args.no_tf = False
+	if args.topic_exclude and ('tf' in args.topic_exclude or '/tf' in args.topic_exclude):
+		args.no_tf = True
+	
+	rospy.init_node('bag_play',anonymous=True)
+	
+	tfs = []
+	msgs = []
+	
+	duration = None
+	
+	for fname in args.file:
+		if len(args.file) == 1:
+			rospy.loginfo('Loading messages...')
+		else:
+			rospy.loginfo('Loading messages from %s...',fname)
+		bag = Bag(fname)
+	
+		bag_tfs = []
+		bag_msgs = []
+		for topic,msg,t in bag:
+			if rospy.is_shutdown():
+				break
+			if topic in ['tf','/tf']:
+				if args.no_tf:
+					continue
+				else:
+					for tf in msg.transforms:
+						bag_tfs.append((tf.header.stamp,'/tf',tf))
+			else:
+				if args.tf_only:
+					continue
+				else:
+					if args.topic_include and topic not in args.topic_include:
+						continue
+					if args.topic_exclude and topic in args.topic_exclude:
+						continue
+					if msg._has_header:
+						t = msg.header.stamp
+					bag_msgs.append((t,topic,msg))
+
+		bag_tfs.sort(key=lambda m: m[0].to_sec())
+		bag_msgs.sort(key=lambda m: m[0].to_sec())
+		
+		if not bag_tfs and not bag_msgs:
+			continue
+	
+		if bag_tfs and not bag_msgs:
+			min_time = bag_tfs[0][0]
+			max_time = bag_tfs[-1][0]
+		elif bag_msgs and not bag_tfs:
+			min_time = bag_msgs[0][0]
+			max_time = bag_msgs[-1][0]
+		else:
+			min_time = min(bag_tfs[0][0],bag_msgs[0][0])
+			max_time = max(bag_tfs[-1][0],bag_msgs[-1][0])
+	
+		bag_duration = max_time - min_time
+		if duration is None:
+			duration = bag_duration
+		else:
+			duration = max(duration,bag_duration)
+	
+		for t,topic,tf in bag_tfs:
+			t = t - min_time
+			tf.header.stamp = tf.header.stamp - min_time
+			tfs.append((t,topic,tf))
+	
+		for t,topic,msg in bag_msgs:
+			t = t - min_time
+			if msg._has_header:
+				msg.header.stamp = msg.header.stamp - min_time
+			msgs.append((t,t,topic,msg))
+	
+	if not tfs and not msgs:
+		raise Exception('No messages matched!')
+	
+	num_tfs = len(tfs)
+	
+	tf_msgs = []
+	if tfs:
+		first_tf_time,_,first_tf = tfs.pop()
+		first_tf_msg = tfMessage()
+		first_tf_msg.transforms.append(first_tf)
+		tf_msgs = [(first_tf_time,[first_tf_time],'/tf',first_tf_msg)]
+		while tfs:
+			tf_time,_,tf = tfs.pop()
+			if tf_msgs[-1][0] - tf_time > rospy.Duration(args.tf_interval):
+				tf_msgs[-1][1].reverse()
+				tf_msgs[-1][3].transforms.reverse()
+				new_tf_msg = tfMessage()
+				new_tf_msg.transforms.append(tf)
+				tf_msgs.append((tf_time,[tf_time],'/tf',new_tf_msg))
+			else:
+				tf_msgs[-1][1].append(tf_time)
+				tf_msgs[-1][3].transforms.append(tf)
+		tf_msgs[-1][1].reverse()
+		tf_msgs[-1][3].transforms.reverse()
+		tf_msgs.reverse()
+	
+	rospy.loginfo('Duration %f sec',duration.to_sec())
+	
+	if args.tf_only:
+		rospy.loginfo('publishing %d tfs (%d msgs)',num_tfs,len(tf_msgs))
+	elif args.no_tf:
+		rospy.loginfo('publishing %d messages',len(msgs))
+	else:
+		rospy.loginfo('publishing %d msgs and %d tfs (%d msgs)',len(msgs),num_tfs,len(tf_msgs))
+	
+	all_msgs = msgs + tf_msgs
+	all_msgs.sort(key=lambda m: m[0].to_sec())
+	num_all_msgs = len(all_msgs)
+	
+	pubs = {}
+	
+	loop = args.loop
+	num_loops = args.num_loops
+	
+	orig_start_time = rospy.Time.now()
+	start_time = orig_start_time
+	
+	loop_num = 0
+	while (loop or loop_num < num_loops) and not rospy.is_shutdown():
+		loop_num += 1
+		if not args.quiet and (loop or num_loops != 1):
+			print 'loop #%d...' % loop_num,
+			sys.stdout.flush()
+		start_time = rospy.Time.now()
+		start_time_dur = rospy.Duration(start_time.to_sec())
+		now = start_time
+		current_offset = rospy.Duration(0)
+		offset_diffs = [0.] * num_all_msgs
+		for idx in xrange(len(all_msgs)):
+			if rospy.is_shutdown():
+				break
+			offset,stamp,topic,msg = all_msgs[idx]
+			
+			if offset > current_offset:
+				rospy.sleep(start_time + offset - rospy.Time.now())
+				now = rospy.Time.now()
+				current_offset = offset
+			actual_offset = (rospy.Time.now() - start_time)
+			offset_diff = (actual_offset - current_offset).to_sec()
+			offset_diffs[idx] = offset_diff
+			if msg._type == 'tf/tfMessage' and not args.no_tf:
+				for i in xrange(len(msg.transforms)):
+					msg.transforms[i].header.stamp = start_time + stamp[i]
+			elif msg._has_header and not args.tf_only:
+				msg.header.stamp = start_time + stamp
+			if not pubs.has_key(topic):
+				pubs[topic] = rospy.Publisher(topic,type(msg))
+			pubs[topic].publish(msg)
+		end_time = rospy.Time.now()
+		loop_time = end_time - start_time
+		total_time = end_time - orig_start_time
+		if not args.quiet:
+			print '%.2f sec, %.2f sec total\tdiff: avg=%f  max=%f' % (loop_time.to_sec(),total_time.to_sec(), sum(offset_diffs)/float(num_all_msgs), max(offset_diffs))
+		if loop_time < args.min_loop_time:
+			rospy.sleep(args.min_loop_time-loop_time)
+
+if __name__ == '__main__':
+	main()
