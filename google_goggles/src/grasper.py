@@ -74,6 +74,7 @@ class Grasper:
 		
 		#self.move_arm = SimpleActionClient('move_right_arm', MoveArmAction)
 		
+		#set up publishers
 		self.pregrasp_pose_pub = rospy.Publisher('pregrasp_pose',PoseStamped,latch=True);
 		self.grasp_pose_pub = rospy.Publisher('grasp_pose',PoseStamped,latch=False);
 		self.lift_pose_pub = rospy.Publisher('lift_pose',PoseStamped,latch=True);
@@ -91,11 +92,13 @@ class Grasper:
 		self.select_grasps_after = select_grasps_after
 		self.shuffle_poses = shuffle_poses
 		
+		#table height is used for collision checking grasps
 		self.table_height = table_height
 		self.table_height_topic = table_height_topic
 		if self.table_height_topic:
 			self.table_height_sub = rospy.Subscriber(self.table_height_topic, Float32, self.table_height_callback)
 		
+		#object mesh vs. point cloud options
 		self.use_object_mesh = False
 		self.object_mesh = None
 		
@@ -126,7 +129,12 @@ class Grasper:
 			self.grasp_pose_array_sub = rospy.Subscriber(grasp_pose_array_topic,PoseArray,self.grasp_pose_array)
 	
 	def grasp_pose_array(self,msg,qualities = None):
+		#Upon receiving a list of grasps, we want to select one, test it, 
+		# and if it doesn't work, go on to the next one
+		#A grasp is given as pose of the gripper
 		grasp_nums = list(xrange(len(msg.poses)))
+
+		#we have options that allow us to select or eliminate grasps for testing
 		if self.select_grasp is not None:
 			print 'selecting grasp %d' % self.select_grasp
 			msg.poses = [msg.poses[self.select_grasp]]
@@ -140,6 +148,7 @@ class Grasper:
 			if qualities:
 				qualities = qualities[self.select_grasps_after:]
 		
+		#optionally shuffle the grasps
 		if self.shuffle_poses:
 			print "shuffling"
 			if qualities:
@@ -150,6 +159,9 @@ class Grasper:
 				l = zip(msg.poses,grasp_nums)
 				random.shuffle(l)
 				msg.poses,grasp_nums = zip(*l)
+
+		#The table height may interfere with all of the grasps, so if none of them work,
+		# shift the table down and try again
 		max_shift = -0.05
 		shift_steps = 5
 		result = None
@@ -157,6 +169,7 @@ class Grasper:
 			shift = max_shift * shift_step / shift_steps
 			if shift_step != 0:
 				print 'shifting table down by %f' % (-shift)
+			#test each pose in turn
 			for idx, pose in enumerate(msg.poses):
 				grasp_num = grasp_nums[idx]
 				pose_stamped = PoseStamped()
